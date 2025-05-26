@@ -48,8 +48,8 @@ namespace ArchidektCollectionQueryProject
 
 
 
-			Task<List<KeyValuePair<string, string>>> collectionTask = Task.Run(() => GetArchidektUserIDs("D:\\ArchidektCollectionQueryTool\\ArchidektCollectionQueryProject\\collections.txt"));
-			Task<List<QueryCardInfo>> cards = Task.Run(() => GetCardNamesFromFile("D:\\ArchidektCollectionQueryTool\\ArchidektCollectionQueryProject\\cards.txt"));
+			Task<List<KeyValuePair<string, string>>> collectionTask = Task.Run(() => GetArchidektUserIDs("C:\\Users\\colin.deane\\Documents\\ArchidektProject\\ArchidektQueryTool\\collections.txt"));
+			Task<List<QueryCardInfo>> cards = Task.Run(() => GetCardNamesFromFile("C:\\Users\\colin.deane\\Documents\\ArchidektProject\\ArchidektQueryTool\\cards.txt"));
 
 			Task.WaitAll(collectionTask, cards);
 
@@ -62,8 +62,10 @@ namespace ArchidektCollectionQueryProject
 					// Query Archidekt
 					//cardQueryTaskList.Add(Task.Run(() => QueryCollectionForCard(collection.Value, card, exactMatch)));
 				}
-				deckQueryTaskList.Add(LoadDeckInfoForUser(collection.Key));
-			}
+				//deckQueryTaskList.Add(LoadDeckInfoForUser(collection.Key));
+				await LoadDeckInfoForUser(collection.Key);
+
+            }
 			Task.WaitAll(cardQueryTaskList.ToArray());
 			Task.WaitAll(deckQueryTaskList.ToArray());
 			foreach(Task<List<CollectionCardInfo>> returnedCardInfo in cardQueryTaskList)
@@ -72,7 +74,7 @@ namespace ArchidektCollectionQueryProject
 				foreach (CollectionCardInfo collectionCardInfo in result)
 				{
 					Console.WriteLine("**********");
-					Console.WriteLine($"Found card info for collection: {collectionCardInfo.CollectionId} | Card: {collectionCardInfo.Name} | Price: {collectionCardInfo.Price:C2} | Quantity: {collectionCardInfo.OwnedQuantity} | IsFoil: {collectionCardInfo.Foil} | TcgPlayerId: {collectionCardInfo.TcgPlayerId}");
+					Console.WriteLine($"Found card info for collection: {collectionCardInfo.CollectionId} | Card: {collectionCardInfo.Name} | Price: {collectionCardInfo.Price:C2} | Quantity: {collectionCardInfo.Quantity} | IsFoil: {collectionCardInfo.Foil} | TcgPlayerId: {collectionCardInfo.TcgPlayerId}");
 					if (collectionCardInfo.Errors.Count > 0)
 					{
 						Console.WriteLine("Found the following errors");
@@ -269,7 +271,7 @@ namespace ArchidektCollectionQueryProject
 								JToken? quantityToken = card.SelectToken($"$..{cardQuantityIndicator}");
 								if (quantityToken != null)
 								{
-									cardInfo.OwnedQuantity = quantityToken.Value<int>();
+									cardInfo.Quantity = quantityToken.Value<int>();
 								}
 								else
 								{
@@ -371,7 +373,7 @@ namespace ArchidektCollectionQueryProject
 			}
 			await Task.WhenAll(deckQueryTasks.ToArray());
 		}
-
+		// What to do with the category information???
 		static public async Task<List<CollectionCardInfo>> GetCardsInDeck(string deckId)
 		{
 			List<CollectionCardInfo> cards = new List<CollectionCardInfo>();
@@ -388,46 +390,52 @@ namespace ArchidektCollectionQueryProject
 			JToken? cardMapToken = deckJson.SelectToken("$..cardMap");
 			if (cardMapToken != null)
 			{
-				Console.WriteLine($"Cards: {cardMapToken.Children().Count()}");
 				foreach (JToken token in cardMapToken)
 				{
 					CollectionCardInfo cardInfo = new CollectionCardInfo();
 
-					string? name = token.SelectToken("$..name")?.Value<string>();
-					if (name != null)
+                    string? name = token.SelectTokens("$..name")?.Where(t => !string.IsNullOrEmpty(t.Value<string>())).First().Value<string>();
+                    if (name != null)
 					{
 						Console.WriteLine($"DeckId: {deckId} | Found card named: {name}");
+						cardInfo.Name = name;
 					}
 					else
 					{
-						Console.WriteLine($"");
+						Console.WriteLine($"Failed to find name of card for deckId: {deckId}");
+						continue;
 					}
 					IEnumerable<string?>? cardCategories = token.SelectToken("$..categories")?.Values<string>();
 					if (cardCategories != null)
 					{
-
+						foreach(string? cardCategory in cardCategories)
+						{
+							Console.WriteLine($"Found category: {cardCategory} for card: {name}");
+						}
 					}
 					else
 					{
-
+						Console.WriteLine($"Failed to find categories for card: {name}");
 					}
 					int? tcgId = token.SelectToken("$..ids.tcgId")?.Value<int>();
 					if (tcgId != null)
 					{
-
+						Console.WriteLine($"Found tcgId {tcgId} for card name: {name}");
+						cardInfo.TcgPlayerId = tcgId.Value;
 					}
 					else
 					{
-
+						Console.WriteLine($"Failed to find tcgId for card: {name}");
 					}
 					int? qty = token.SelectToken("$..qty")?.Value<int>();
 					if (qty != null)
 					{
-
+						Console.WriteLine($"Found quantity: {qty} for card name: {name}");
+						cardInfo.Quantity = qty.Value;
 					}
 					else
 					{
-
+						Console.WriteLine($"Failed to find quantity for card name: {name}");
 					}
 
 					cards.Add(cardInfo);
@@ -477,6 +485,8 @@ namespace ArchidektCollectionQueryProject
 					if (inDeck != null)
 					{
 						categoryInfo.InDeck = inDeck.Value;
+						// Special condition for Sideboard to not be included in the deck
+						if (categoryName == "Sideboard") categoryInfo.InDeck = false;
 					}
 					else
 					{
@@ -512,11 +522,12 @@ namespace ArchidektCollectionQueryProject
 		{
 			public string CollectionId;
 			public string Name;
-			public int OwnedQuantity;
+			public int Quantity;
 			public bool Foil;
 			public float Price;
 			public int TcgPlayerId;
 			public List<string> Errors;
+			public List<string> Categories;
 		}
 
 		public struct CategoryInfo
