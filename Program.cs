@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Newtonsoft.Json.Schema;
 using System;
+using System.Text;
 
 namespace ArchidektCollectionQueryProject
 {
@@ -16,7 +17,7 @@ namespace ArchidektCollectionQueryProject
 		static string logFile = "outputLog.txt";
 		static string outputFile = "output.txt";
 		static bool exactMatch = false;
-		static bool includeDeckInfo = false;
+		static bool includeDeckInfo = true;
 		static bool logToConsole = true;
 		static bool outputToConsole = true;
 		// Conststrings
@@ -47,24 +48,23 @@ namespace ArchidektCollectionQueryProject
         {
 
 
-
-			Task<List<KeyValuePair<string, string>>> collectionTask = Task.Run(() => GetArchidektUserIDs("C:\\Users\\colin.deane\\Documents\\ArchidektProject\\ArchidektQueryTool\\collections.txt"));
-			Task<List<QueryCardInfo>> cards = Task.Run(() => GetCardNamesFromFile("C:\\Users\\colin.deane\\Documents\\ArchidektProject\\ArchidektQueryTool\\cards.txt"));
+			Task<List<KeyValuePair<string, string>>> collectionTask = GetArchidektUserIDs("../../../collections.txt");
+			Task<List<QueryCardInfo>> cards = GetCardNamesFromFile("../../../cards.txt");
 
 			Task.WaitAll(collectionTask, cards);
 
 			List<Task<List<CollectionCardInfo>>> cardQueryTaskList = new List<Task<List<CollectionCardInfo>>>();
-			List<Task> deckQueryTaskList = new List<Task>();
+			List<Task<List<DeckInfo>>> deckQueryTaskList = new List<Task<List<DeckInfo>>>();
 			foreach (KeyValuePair<string,string> collection in collectionTask.Result)
 			{
-				foreach(QueryCardInfo card in cards.Result)
+				if (includeDeckInfo)
 				{
-					// Query Archidekt
-					//cardQueryTaskList.Add(Task.Run(() => QueryCollectionForCard(collection.Value, card, exactMatch)));
+					deckQueryTaskList.Add(LoadAllDeckInfoForUser(collection.Key));
 				}
-				//deckQueryTaskList.Add(LoadDeckInfoForUser(collection.Key));
-				await LoadDeckInfoForUser(collection.Key);
-
+				foreach (QueryCardInfo card in cards.Result)
+				{
+					cardQueryTaskList.Add(QueryCollectionForCard(collection.Value, card, exactMatch));
+				}
             }
 			Task.WaitAll(cardQueryTaskList.ToArray());
 			Task.WaitAll(deckQueryTaskList.ToArray());
@@ -73,6 +73,7 @@ namespace ArchidektCollectionQueryProject
 				List<CollectionCardInfo> result = returnedCardInfo.Result;
 				foreach (CollectionCardInfo collectionCardInfo in result)
 				{
+					/*
 					Console.WriteLine("**********");
 					Console.WriteLine($"Found card info for collection: {collectionCardInfo.CollectionId} | Card: {collectionCardInfo.Name} | Price: {collectionCardInfo.Price:C2} | Quantity: {collectionCardInfo.Quantity} | IsFoil: {collectionCardInfo.Foil} | TcgPlayerId: {collectionCardInfo.TcgPlayerId}");
 					if (collectionCardInfo.Errors.Count > 0)
@@ -81,10 +82,11 @@ namespace ArchidektCollectionQueryProject
 						foreach (string error in collectionCardInfo.Errors)
 							{ Console.WriteLine(error); }
 					}
+					*/
 				}
 			}
 
-			CreateOutput();
+			CreateOutput(cardQueryTaskList.Select(c => c.Result).ToList(), includeDeckInfo ? deckQueryTaskList.Select(d => d.Result).ToList() : null);
 	    }
 
 		/* TODO 
@@ -137,7 +139,7 @@ namespace ArchidektCollectionQueryProject
 
 		// TODO: Text box input?
 		// TODO: Cancellation logic
-		static public List<QueryCardInfo> GetCardNamesFromFile(string path)
+		static public Task<List<QueryCardInfo>> GetCardNamesFromFile(string path)
 		{
 			List<string> lines = File.ReadAllLines(path).ToList();
 			List<QueryCardInfo> result = new List<QueryCardInfo>();
@@ -154,7 +156,7 @@ namespace ArchidektCollectionQueryProject
 					// Log failure to parse line here!
 				}
 			}
-			return result;
+			return Task.FromResult(result);
 		}
 
 		static public QueryCardInfo? GetCardInfoFromString(string text)
@@ -337,24 +339,26 @@ namespace ArchidektCollectionQueryProject
 			return result;
 		}
 
-		static public async Task LoadDeckInfoForUser(string username)
+		static public async Task<List<DeckInfo>> LoadAllDeckInfoForUser(string username)
 		{
+			List<DeckInfo> results = new List<DeckInfo>();
 			string query = $"{deckSearchEndpoint}?ownerUsername={username}";
 			JToken json = await QueryAchidektPageForData(query);
 			JToken? resultsToken = json.SelectToken($"$..{deckPageIndicator}");
-			List<Task> deckQueryTasks = new List<Task>();
+			List<Task<DeckInfo>> deckQueryTasks = new List<Task<DeckInfo>>();
 			if (resultsToken != null)
 			{
 				foreach (JToken result in resultsToken.Children())
 				{
 					JToken? deckIdToken = result.SelectToken("id");
-					if (deckIdToken != null)
+					JToken? deckNameToken = result.SelectToken("name");
+					if (deckIdToken != null && deckNameToken != null)
 					{
 						string? deckId = deckIdToken.Value<string>();
-						if (deckId != null)
+						string? deckName = deckNameToken.Value<string>();
+						if (deckId != null && deckName != null)
 						{
-							await(GetCardsInDeck(deckId));
-							//deckQueryTasks.Add(GetCardsInDeck(deckId));
+							deckQueryTasks.Add(LoadDeckInfo(deckName, deckId));
 						}
 						else
 						{
@@ -371,22 +375,36 @@ namespace ArchidektCollectionQueryProject
 			{
 				Console.WriteLine("Deck results was NULL");
 			}
-			await Task.WhenAll(deckQueryTasks.ToArray());
+			DeckInfo[]? deckInfo = await Task.WhenAll(deckQueryTasks.ToArray());
+			if (deckInfo != null)
+			{
+				results = deckInfo.ToList();
+			}
+			else
+			{
+				// Log here
+			}
+			return results;
 		}
-		// What to do with the category information???
-		static public async Task<List<CollectionCardInfo>> GetCardsInDeck(string deckId)
+
+		static public async Task<DeckInfo> LoadDeckInfo(string deckName, string deckId)
 		{
-			List<CollectionCardInfo> cards = new List<CollectionCardInfo>();
+			DeckInfo result = new DeckInfo();
+			result.DeckName = deckName;
 			string query = $"{deckEndpoint}{deckId}/";
 			JToken deckJson = await QueryAchidektPageForData(query);
 
-			Dictionary<string, CategoryInfo> categories;
 			JToken? categoryToken = deckJson.SelectToken("$..deck.categories");
 			if (categoryToken != null)
 			{
-				categories = GetCategoryInformationFromDeck(categoryToken);
+				result.CategoryInfo = GetCategoryInformationFromDeck(categoryToken);
+			}
+			else
+			{
+				// Log here
 			}
 
+			Dictionary<int, CollectionCardInfo> cards = new Dictionary<int, CollectionCardInfo>();
 			JToken? cardMapToken = deckJson.SelectToken("$..cardMap");
 			if (cardMapToken != null)
 			{
@@ -394,10 +412,9 @@ namespace ArchidektCollectionQueryProject
 				{
 					CollectionCardInfo cardInfo = new CollectionCardInfo();
 
-                    string? name = token.SelectTokens("$..name")?.Where(t => !string.IsNullOrEmpty(t.Value<string>())).First().Value<string>();
-                    if (name != null)
+                    string? name = token.SelectTokens("$..name")?.Select(t => t.Value<string>()).FirstOrDefault(s => !string.IsNullOrEmpty(s));
+                    if (!string.IsNullOrEmpty(name))
 					{
-						Console.WriteLine($"DeckId: {deckId} | Found card named: {name}");
 						cardInfo.Name = name;
 					}
 					else
@@ -405,32 +422,28 @@ namespace ArchidektCollectionQueryProject
 						Console.WriteLine($"Failed to find name of card for deckId: {deckId}");
 						continue;
 					}
-					IEnumerable<string?>? cardCategories = token.SelectToken("$..categories")?.Values<string>();
-					if (cardCategories != null)
-					{
-						foreach(string? cardCategory in cardCategories)
-						{
-							Console.WriteLine($"Found category: {cardCategory} for card: {name}");
-						}
-					}
-					else
-					{
-						Console.WriteLine($"Failed to find categories for card: {name}");
-					}
 					int? tcgId = token.SelectToken("$..ids.tcgId")?.Value<int>();
 					if (tcgId != null)
 					{
-						Console.WriteLine($"Found tcgId {tcgId} for card name: {name}");
 						cardInfo.TcgPlayerId = tcgId.Value;
 					}
 					else
 					{
 						Console.WriteLine($"Failed to find tcgId for card: {name}");
+						continue;
+					}
+					IEnumerable<string?>? cardCategories = token.SelectToken("$..categories")?.Values<string>();
+					if (cardCategories != null)
+					{
+						cardInfo.Categories = cardCategories.Where(s => s != null).Select(s => s!).ToList();
+					}
+					else
+					{
+						Console.WriteLine($"Failed to find categories for card: {name}");
 					}
 					int? qty = token.SelectToken("$..qty")?.Value<int>();
 					if (qty != null)
 					{
-						Console.WriteLine($"Found quantity: {qty} for card name: {name}");
 						cardInfo.Quantity = qty.Value;
 					}
 					else
@@ -438,11 +451,49 @@ namespace ArchidektCollectionQueryProject
 						Console.WriteLine($"Failed to find quantity for card name: {name}");
 					}
 
-					cards.Add(cardInfo);
+					cards.Add(tcgId.Value, cardInfo);
 				}
 			}
+			result.CardsByTcgId = cards;
 			
-			return cards;
+			return result;
+		}
+
+		static public Dictionary<string, CategoryInfo> GetCategoryInformationFromDeck(JToken categoryToken)
+		{
+			Dictionary<string, CategoryInfo> result = new Dictionary<string, CategoryInfo>();
+			foreach (JToken category in categoryToken.Children())
+			{
+				string? categoryName = category.SelectToken("$..name")?.Value<string>();
+				if (categoryName == null)
+				{
+					continue;
+				}
+				CategoryInfo categoryInfo = new CategoryInfo();
+
+				bool? inDeck = category.SelectToken("$..includedInDeck")?.Value<bool>();
+				if (inDeck != null)
+				{
+					categoryInfo.InDeck = inDeck.Value;
+					// Special condition for Sideboard to not be included in the deck
+					if (categoryName == "Sideboard") categoryInfo.InDeck = false;
+				}
+				else
+				{
+					// Log here
+				}
+				bool? isPremier = category.SelectToken("$..isPremier")?.Value<bool>();
+				if (isPremier != null)
+				{
+					categoryInfo.IsPremier = isPremier.Value;
+				}
+				else
+				{
+					// Log here
+				}
+				result.Add(categoryName, categoryInfo);
+			}
+			return result;
 		}
 
 		static public async Task<JToken> QueryAchidektPageForData(string query)
@@ -465,51 +516,9 @@ namespace ArchidektCollectionQueryProject
 			return JToken.Parse(node.InnerHtml);
 		}
 
-		static public Dictionary<string, CategoryInfo> GetCategoryInformationFromDeck(JToken deckToken)
+		static void CreateOutput(List<List<CollectionCardInfo>> cards, List<List<DeckInfo>>? deckInfo)
 		{
-			Dictionary<string, CategoryInfo> result = new Dictionary<string, CategoryInfo>();
-			JToken? categoryHolder = deckToken.SelectToken("..deck.categories");
-			if (categoryHolder != null)
-			{
-				foreach (JToken category in categoryHolder.Children())
-				{
-					string? categoryName = category.SelectToken("name")?.Value<string>();
-					if (categoryName == null)
-					{
-						continue;
-					}
-					CategoryInfo categoryInfo = new CategoryInfo();
-					categoryInfo.Name = categoryName;
-
-					bool? inDeck =  category.SelectToken("includedInDeck")?.Value<bool>();
-					if (inDeck != null)
-					{
-						categoryInfo.InDeck = inDeck.Value;
-						// Special condition for Sideboard to not be included in the deck
-						if (categoryName == "Sideboard") categoryInfo.InDeck = false;
-					}
-					else
-					{
-					
-					}
-					bool? isPremier = category.SelectToken("isPremier")?.Value<bool>();
-					if (isPremier != null)
-					{
-						categoryInfo.IsPremier = isPremier.Value;
-					}
-					else
-					{
-
-					}
-					result.Add(categoryName, categoryInfo);
-				}
-			}
-			return result;
-		}
-
-		static void CreateOutput()
-		{
-
+			Console.WriteLine($"Cards: {cards.Count} | DeckInfo {deckInfo?.Count}");
 		}
 
 		public struct QueryCardInfo
@@ -528,13 +537,66 @@ namespace ArchidektCollectionQueryProject
 			public int TcgPlayerId;
 			public List<string> Errors;
 			public List<string> Categories;
+
+			public override string ToString()
+			{
+				StringBuilder sb = new StringBuilder();
+				sb.AppendLine($"Card Name: {Name}");
+				sb.AppendLine($"Quantity: {Quantity}");
+				sb.AppendLine($"Foil: {Foil}");
+				sb.AppendLine($"Price: {Price}");
+				sb.AppendLine($"TcgPlayerId: {TcgPlayerId}");
+				if (Categories != null)
+				{
+					sb.AppendLine($"Categories:");
+					foreach (string category in Categories)
+					{
+						sb.AppendLine($"Category: {category}");
+					}
+				}
+					return sb.ToString();
+			}
 		}
 
 		public struct CategoryInfo
 		{
-			public string Name;
 			public bool InDeck;
 			public bool IsPremier;
+
+			public override string ToString()
+			{
+				StringBuilder sb = new StringBuilder();
+				sb.AppendLine($"InDeck: {InDeck}");
+				sb.AppendLine($"IsPremier: {IsPremier}");
+				return sb.ToString();
+			}
+		}
+
+		public struct DeckInfo
+		{
+			public string DeckName;
+			public Dictionary<string, CategoryInfo> CategoryInfo;
+			public Dictionary<int, CollectionCardInfo> CardsByTcgId;
+
+			public override string ToString()
+			{
+				StringBuilder sb = new StringBuilder();
+				sb.AppendLine($"********** {DeckName} **********");
+				sb.AppendLine($"Categories:");
+				foreach (string category in CategoryInfo.Keys)
+				{
+					sb.AppendLine(category);
+					sb.AppendLine(CategoryInfo[category].ToString());
+				}
+				sb.AppendLine("--------------");
+				sb.AppendLine($"Cards:");
+				foreach (int card in CardsByTcgId.Keys)
+				{
+					sb.AppendLine(CardsByTcgId[card].ToString());
+				}
+				sb.AppendLine("*******************************************");
+				return sb.ToString();
+			}
 		}
 	}
 }
