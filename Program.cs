@@ -130,6 +130,8 @@ namespace ArchidektCollectionQueryProject
 
 		// TODO: Text box input?
 		// TODO: Cancellation logic
+		// HashSet<string> cardNames
+		// take path -> load List -> Transform List input into HashSet output
 		static public Task<List<QueryCardInfo>> GetCardNamesFromFile(string path)
 		{
 			List<string> lines = File.ReadAllLines(path).ToList();
@@ -184,6 +186,26 @@ namespace ArchidektCollectionQueryProject
 			}
 
 			return card;
+		}
+
+		static public HashSet<string> CreateCardQueryInputFromList(List<string> input)
+		{
+			HashSet<string> result = new HashSet<string>();
+			foreach (string inputLine in input)
+			{
+				if (string.IsNullOrWhiteSpace(inputLine) || string.IsNullOrEmpty(inputLine)) continue;
+				result.Add(SanitizeLine(inputLine));
+			}
+			return result;
+		}
+
+		static public string SanitizeLine(string line)
+		{
+			string result = line;
+			result = result.Trim();
+
+			result = result.TrimEnd(',');
+			return result;
 		}
 
 		static public async Task<KeyValuePair<string, List<CollectionCardInfo>>> QueryCollectionForCard(string username, string collectionId, QueryCardInfo queryCardInfo, bool allowPartialMatches)
