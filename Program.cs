@@ -1,10 +1,8 @@
 ﻿using HtmlAgilityPack;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Newtonsoft.Json.Schema;
-using System;
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
-using static ArchidektCollectionQueryProject.Program;
 
 namespace ArchidektCollectionQueryProject
 {
@@ -48,25 +46,29 @@ namespace ArchidektCollectionQueryProject
 		static async Task Main(string[] args)
         {
 			// Gathering required information for queries (ArchidektIDs, card names)
-			Task<List<KeyValuePair<string, string>>> collectionTask = GetArchidektUserIDs("../../../collections.txt");
-			Task<List<QueryCardInfo>> cards = GetCardNamesFromFile("../../../cards.txt");
+			Task<HashSet<string>> usernameTask = GetUsernamesToQueryFromFile("../../../collections.txt");
+            Task<Task<List<KeyValuePair<string, string>>>> collectionTask = usernameTask.ContinueWith((t) => GetArchidektUserIDs(t.Result));
+			Task<HashSet<string>> cards = GetCardNamesFromFile("../../../cards.txt");
 			Task.WaitAll(collectionTask, cards);
 			// Query archidekt for information (cards & deck information)
             List<Task<KeyValuePair<string, List<CollectionCardInfo>>>> cardQueryTaskList = new();
 			List<Task<KeyValuePair<string, List<DeckInfo>>>> deckQueryTaskList = new();
-			foreach (KeyValuePair<string,string> collection in collectionTask.Result)
+
+			foreach (KeyValuePair<string,string> collection in collectionTask.Result.Result)
 			{
 				if (includeDeckInfo)
 				{
 					//deckQueryTaskList.Add(LoadAllDeckInfoForUser(collection.Key));
 				}
-				foreach (QueryCardInfo card in cards.Result)
-				{
-					cardQueryTaskList.Add(QueryCollectionForCard(collection.Key, collection.Value, card, allowPartialMatches));
+				foreach (string card in cards.Result)
+				{ 
+
+					//cardQueryTaskList.Add(QueryCollectionForCard(collection.Key, collection.Value, card, allowPartialMatches));
 				}
             }
 			Task.WaitAll(cardQueryTaskList.ToArray());
 			Task.WaitAll(deckQueryTaskList.ToArray());
+
 			// Take the query results and create the output
 			// Have to filter down the card results to a Dictionary so the same entries aren't repeated (even if they were present in the request) - is this a safe assumption?
 			Dictionary<string, Dictionary<string, CollectionCardInfo>> userToCardsDict = new Dictionary<string, Dictionary<string, CollectionCardInfo>>();
@@ -74,7 +76,7 @@ namespace ArchidektCollectionQueryProject
 			{ 
 
 			}
-			Dictionary<string, List<DeckInfo>> userToDecksDict = new Dictionary<string, List<DeckInfo>>();
+			Dictionary<string, List<DeckInfo>> userToDecksDict = deckQueryTaskList.Select(d => d.Result).ToDictionary();
 
 			//string output = CreateOutput(new List<string>(), cardQueryTaskList.Select(c => c.Result).ToDictionary(), includeDeckInfo ? deckQueryTaskList.Select(d => d.Result).ToDictionary() : null);
 			//Console.WriteLine(output);
@@ -83,13 +85,12 @@ namespace ArchidektCollectionQueryProject
 		/* TODO 
 		 * Logging
 		 */
-		static public async Task<List<KeyValuePair<string, string>>> GetArchidektUserIDs(string path)
+		static public async Task<List<KeyValuePair<string, string>>> GetArchidektUserIDs(HashSet<string> usernames)
 		{
-			List<string> archidektUsernames = File.ReadAllLines(path).Select(line => line.Trim()).Where(line => !string.IsNullOrWhiteSpace(line)).Distinct().ToList();
 			List<KeyValuePair<string, string>> result = new List<KeyValuePair<string, string>>();
 			// Associate username with the task incase of a failure
 			Dictionary<string, Task<string?>> archidektUserIdTaskMap = new Dictionary<string, Task<string?>>();
-			foreach (string username in archidektUsernames)
+			foreach (string username in usernames)
 			{
 				archidektUserIdTaskMap.Add(username, GetArchidektUserID(username));
 			}
@@ -109,83 +110,48 @@ namespace ArchidektCollectionQueryProject
 			return result;
 		}
 
-		// TODO: Support staggering retries in case of 403 error?
-		static async public Task<string?> GetArchidektUserID(string username)
+        // TODO: Support staggering retries in case of 403 error?
+        static async public Task<string?> GetArchidektUserID(string username)
+        {
+            // TODO add staggering and retries to the HTTP Client
+            var response = await Client.GetAsync(profileEndpoint + username);
+            if (response.StatusCode != System.Net.HttpStatusCode.OK)
+            {
+                // TODO: Logging here?
+                return null;
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            var html = new HtmlDocument();
+            html.LoadHtml(responseContent);
+            HtmlNode? node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
+            string? userId = JToken.Parse(node.InnerHtml)?.SelectToken($"$..{userIdJsonIndicator}")?.Value<string>();
+            return userId;
+        }
+
+        static async public Task<HashSet<string>> GetUsernamesToQueryFromFile(string path)
 		{
-			// TODO add staggering and retries to the HTTP Client
-			var response = await Client.GetAsync(profileEndpoint + username);
-			if (response.StatusCode != System.Net.HttpStatusCode.OK)
+            HashSet<string> usernameSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			if (string.IsNullOrEmpty(path) || string.IsNullOrWhiteSpace(path)) return usernameSet;
+			IEnumerable<string> rawUsernames = await File.ReadAllLinesAsync(path);
+			rawUsernames = rawUsernames.Select(line => line.Trim()).Select(line => line.TrimEnd(',')).Where(line => !(string.IsNullOrEmpty(line) || string.IsNullOrWhiteSpace(line)));
+
+            foreach (string rawUsername in rawUsernames)
 			{
-				// TODO: Logging here?
-				return null;
+				usernameSet.Add(rawUsername);
 			}
 
-			var responseContent = await response.Content.ReadAsStringAsync();
-			var html = new HtmlDocument();
-			html.LoadHtml(responseContent);
-			HtmlNode? node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
-			string? userId = JToken.Parse(node.InnerHtml)?.SelectToken($"$..{userIdJsonIndicator}")?.Value<string>();
-			return userId;
+			return usernameSet;
 		}
 
 		// TODO: Text box input?
 		// TODO: Cancellation logic
-		// HashSet<string> cardNames
-		// take path -> load List -> Transform List input into HashSet output
-		static public Task<List<QueryCardInfo>> GetCardNamesFromFile(string path)
+		static public Task<HashSet<string>> GetCardNamesFromFile(string path)
 		{
 			List<string> lines = File.ReadAllLines(path).ToList();
-			List<QueryCardInfo> result = new List<QueryCardInfo>();
+			HashSet<string> result = CreateCardQueryInputFromList(lines);
 
-			foreach (string line in lines)
-			{
-				QueryCardInfo? cardInfo = GetCardInfoFromString(line);
-				if (cardInfo.HasValue)
-				{
-					result.Add(cardInfo.Value);
-				}
-				else
-				{
-					// Log failure to parse line here!
-				}
-			}
 			return Task.FromResult(result);
-		}
-
-		static public QueryCardInfo? GetCardInfoFromString(string text)
-		{
-			QueryCardInfo? card = null;
-			if(string.IsNullOrEmpty(text))
-			{
-				return card;
-			}
-
-			int quantity = 0;
-			// Grab the quantity (if it exists)
-			if (Char.IsDigit(text[0]))
-			{
-				int spaceIndex = text.IndexOf(" ");
-				string number = new string(text.Substring(0, spaceIndex).Where(Char.IsDigit).ToArray());
-				quantity = int.Parse(number);
-			}
-
-			int firstAlphabeticCharIndex = 0;
-			for (int i = 0; i < text.Length; i++)
-			{
-				if (Char.IsLetter(text[i]))
-				{
-					firstAlphabeticCharIndex = i;
-					break;
-				}
-			}
-
-			text = text.Substring(firstAlphabeticCharIndex);
-			if (!string.IsNullOrEmpty(text))
-			{
-				card = new QueryCardInfo() { Name = text, Quantity = quantity };
-			}
-
-			return card;
 		}
 
 		static public HashSet<string> CreateCardQueryInputFromList(List<string> input)
@@ -194,27 +160,54 @@ namespace ArchidektCollectionQueryProject
 			foreach (string inputLine in input)
 			{
 				if (string.IsNullOrWhiteSpace(inputLine) || string.IsNullOrEmpty(inputLine)) continue;
-				result.Add(SanitizeLine(inputLine));
+				string sanitizedLine = SanitizeCardInputLine(inputLine);
+                if (string.IsNullOrWhiteSpace(sanitizedLine) || string.IsNullOrEmpty(sanitizedLine)) continue;
+                result.Add(sanitizedLine);
 			}
 			return result;
 		}
 
-		static public string SanitizeLine(string line)
+		static public string SanitizeCardInputLine(string line)
 		{
 			string result = line;
 			result = result.Trim();
+			// Remove any quantity (if the first word is a number)
+			if (Char.IsDigit(result[0]))
+			{
+				int firstSpace = result.IndexOf(' ');
+				if (firstSpace != -1)
+				{
+					result = result.Substring(firstSpace + 1);
+				}
+			}
 
-			result = result.TrimEnd(',');
+            int firstAlphabeticCharIndex = 0;
+            for (int i = 0; i < result.Length; i++)
+            {
+                if (Char.IsLetter(result[i]))
+                {
+                    firstAlphabeticCharIndex = i;
+                    break;
+                }
+            }
+
+            result = result.Substring(firstAlphabeticCharIndex);
+            result = result.TrimEnd(',');
 			return result;
 		}
 
-		static public async Task<KeyValuePair<string, List<CollectionCardInfo>>> QueryCollectionForCard(string username, string collectionId, QueryCardInfo queryCardInfo, bool allowPartialMatches)
+		static public async Task QueryCollectionForCardV2(ConcurrentDictionary<string, CollectionCardInfo> card, string username, string collectionId, string cardName, bool allowPartialMatches)
+		{
+
+		}
+
+		static public async Task<KeyValuePair<string, List<CollectionCardInfo>>> QueryCollectionForCard(string username, string collectionId, string cardName, bool allowPartialMatches)
 		{
 			List<CollectionCardInfo> foundCards = new List<CollectionCardInfo>();
 			try
 			{
 				// For whatever reason, spaces breaks the query so we have to only search by the first word and filter down from there
-				string queryCardName = queryCardInfo.Name;
+				string queryCardName = cardName;
 				int firstSpaceIndex = queryCardName.IndexOf(' ');
 				if (firstSpaceIndex != -1)
 				{
@@ -261,7 +254,7 @@ namespace ArchidektCollectionQueryProject
 					JToken? collectionToken = json.SelectToken($"$..{collectionCardsIndicator}");
 					if (collectionToken == null)
 					{
-						throw new Exception($"Failed to find card collection for card: {queryCardInfo.Name}");
+						throw new Exception($"Failed to find card collection for card: {cardName}");
 					}
 					
 					foreach(JToken card in collectionToken.Children())
@@ -269,17 +262,17 @@ namespace ArchidektCollectionQueryProject
 						JToken? cardNameToken = card.SelectToken($"$..{cardNameIndicator}");
 						if (cardNameToken != null)
 						{
-							string? cardName = cardNameToken.Value<string>();
-							if (cardName == null)
+							string? foundCardName = cardNameToken.Value<string>();
+							if (foundCardName == null)
 							{
 								Console.WriteLine($"CardNameToken's value was null");
 								continue;
 							}
-							if ((!allowPartialMatches && cardName == queryCardInfo.Name) || (allowPartialMatches && cardName.Contains(queryCardInfo.Name)))
+							if ((!allowPartialMatches && foundCardName == cardName) || (allowPartialMatches && foundCardName.Contains(cardName)))
 							{
 								// Found a match, add the info!
 								CollectionCardInfo cardInfo = new CollectionCardInfo();
-								cardInfo.Name = cardName;
+								cardInfo.Name = foundCardName;
 								cardInfo.Errors = new List<string>();
 								cardInfo.CollectionId = collectionId;
 								// Get the Quantity
@@ -337,7 +330,7 @@ namespace ArchidektCollectionQueryProject
 						else
 						{
 							// log something here?
-							Console.WriteLine($"Failed to find token for cardname: {queryCardInfo.Name}");
+							Console.WriteLine($"Failed to find token for cardname: {cardName}");
 						}
 					}
 
@@ -578,12 +571,6 @@ namespace ArchidektCollectionQueryProject
 			// Cards not found in anyone's collection section
 
 			return sb.ToString();
-		}
-
-		public struct QueryCardInfo
-		{
-			public string Name;
-			public int Quantity;
 		}
 
 		public struct CollectionCardInfo
