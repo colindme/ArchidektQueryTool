@@ -51,31 +51,38 @@ namespace ArchidektCollectionQueryProject
 			Task<HashSet<string>> cards = GetCardNamesFromFile("../../../cards.txt");
 			Task.WaitAll(collectionTask, cards);
 			// Query archidekt for information (cards & deck information)
-            List<Task<KeyValuePair<string, List<CollectionCardInfo>>>> cardQueryTaskList = new();
+            List<Task> cardQueryTaskList = new();
 			List<Task<KeyValuePair<string, List<DeckInfo>>>> deckQueryTaskList = new();
-
+			List<KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>>> cardCollections = new List<KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>>>();
 			foreach (KeyValuePair<string,string> collection in collectionTask.Result.Result)
 			{
+				ConcurrentDictionary<int, CollectionCardInfo> cardCollection = new ConcurrentDictionary<int, CollectionCardInfo>();
+				cardCollections.Add(KeyValuePair.Create(collection.Key, cardCollection));
 				if (includeDeckInfo)
 				{
 					//deckQueryTaskList.Add(LoadAllDeckInfoForUser(collection.Key));
 				}
 				foreach (string card in cards.Result)
-				{ 
-
-					//cardQueryTaskList.Add(QueryCollectionForCard(collection.Key, collection.Value, card, allowPartialMatches));
+				{
+					cardQueryTaskList.Add(QueryCollectionForCard(cardCollection, collection.Value, card, allowPartialMatches));
 				}
             }
 			Task.WaitAll(cardQueryTaskList.ToArray());
 			Task.WaitAll(deckQueryTaskList.ToArray());
 
-			// Take the query results and create the output
-			// Have to filter down the card results to a Dictionary so the same entries aren't repeated (even if they were present in the request) - is this a safe assumption?
 			Dictionary<string, Dictionary<string, CollectionCardInfo>> userToCardsDict = new Dictionary<string, Dictionary<string, CollectionCardInfo>>();
-			foreach(KeyValuePair<string, List<CollectionCardInfo>> key in cardQueryTaskList.Select(c => c.Result))
-			{ 
 
+			foreach(var kvp in cardCollections)
+			{
+				if (kvp.Value.Values.Count == 0) continue;
+				Console.WriteLine($"User: {kvp.Key}");
+				foreach(var card in kvp.Value.Values)
+				{
+					Console.WriteLine(card.ToString());
+				}
 			}
+			
+
 			Dictionary<string, List<DeckInfo>> userToDecksDict = deckQueryTaskList.Select(d => d.Result).ToDictionary();
 
 			//string output = CreateOutput(new List<string>(), cardQueryTaskList.Select(c => c.Result).ToDictionary(), includeDeckInfo ? deckQueryTaskList.Select(d => d.Result).ToDictionary() : null);
@@ -196,14 +203,8 @@ namespace ArchidektCollectionQueryProject
 			return result;
 		}
 
-		static public async Task QueryCollectionForCardV2(ConcurrentDictionary<string, CollectionCardInfo> card, string username, string collectionId, string cardName, bool allowPartialMatches)
+		static public async Task QueryCollectionForCard(ConcurrentDictionary<int, CollectionCardInfo> cardCollection, string collectionId, string cardName, bool allowPartialMatches)
 		{
-
-		}
-
-		static public async Task<KeyValuePair<string, List<CollectionCardInfo>>> QueryCollectionForCard(string username, string collectionId, string cardName, bool allowPartialMatches)
-		{
-			List<CollectionCardInfo> foundCards = new List<CollectionCardInfo>();
 			try
 			{
 				// For whatever reason, spaces breaks the query so we have to only search by the first word and filter down from there
@@ -220,22 +221,7 @@ namespace ArchidektCollectionQueryProject
 				do
 				{
 					string query = $"{collectionEndpoint}{collectionId}?syntaxQuery={escapedCardName}&page={currentPage}";
-					var response = await Client.GetAsync(query);
-					// Support backing off incase of 403
-					if (response.StatusCode != System.Net.HttpStatusCode.OK)
-					{
-						// TODO: Error log here
-					}
-
-					string responseContent = await response.Content.ReadAsStringAsync();
-					HtmlDocument html = new HtmlDocument();
-					html.LoadHtml(responseContent);
-					HtmlNode node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
-					if (node == null)
-					{
-						throw new Exception();
-					}
-					JToken json = JToken.Parse(node.InnerHtml);
+					JToken json = await QueryAchidektPageForData(query);
 
 					// If this is the first page we are parsing, parse the data for the total records / pages
 					if (currentPage == 1)
@@ -256,8 +242,8 @@ namespace ArchidektCollectionQueryProject
 					{
 						throw new Exception($"Failed to find card collection for card: {cardName}");
 					}
-					
-					foreach(JToken card in collectionToken.Children())
+
+					foreach (JToken card in collectionToken.Children())
 					{
 						JToken? cardNameToken = card.SelectToken($"$..{cardNameIndicator}");
 						if (cardNameToken != null)
@@ -268,8 +254,20 @@ namespace ArchidektCollectionQueryProject
 								Console.WriteLine($"CardNameToken's value was null");
 								continue;
 							}
-							if ((!allowPartialMatches && foundCardName == cardName) || (allowPartialMatches && foundCardName.Contains(cardName)))
+							if ((!allowPartialMatches && foundCardName.ToUpper() == cardName.ToUpper()) || (allowPartialMatches && foundCardName.ToUpper().Contains(cardName.ToUpper())))
 							{
+								int recordId;
+								if (card is JProperty property)
+								{
+									recordId = int.Parse(property.Name);
+								}
+								else
+								{
+									Console.WriteLine($"Failed to find recordId for card: {foundCardName} | Card was not a JProperty");
+									continue;
+								}
+								
+
 								// Found a match, add the info!
 								CollectionCardInfo cardInfo = new CollectionCardInfo();
 								cardInfo.Name = foundCardName;
@@ -324,7 +322,8 @@ namespace ArchidektCollectionQueryProject
 								{
 									cardInfo.Errors.Add("Failed to find TCGPlayerId");
 								}
-								foundCards.Add(cardInfo);
+
+								cardCollection.TryAdd(recordId, cardInfo);
 							}
 						}
 						else
@@ -342,7 +341,6 @@ namespace ArchidektCollectionQueryProject
 			{
 				Console.WriteLine(ex.Message);
 			}
-			return new KeyValuePair<string, List<CollectionCardInfo>>(username, foundCards);
 		}
 
 		static public async Task<KeyValuePair<string, List<DeckInfo>>> LoadAllDeckInfoForUser(string username)
