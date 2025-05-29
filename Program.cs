@@ -60,7 +60,7 @@ namespace ArchidektCollectionQueryProject
 				cardCollections.Add(KeyValuePair.Create(collection.Key, cardCollection));
 				if (includeDeckInfo)
 				{
-					//deckQueryTaskList.Add(LoadAllDeckInfoForUser(collection.Key));
+					deckQueryTaskList.Add(LoadAllDeckInfoForUser(collection.Key));
 				}
 				foreach (string card in cards.Result)
 				{
@@ -68,25 +68,16 @@ namespace ArchidektCollectionQueryProject
 				}
             }
 			Task.WaitAll(cardQueryTaskList.ToArray());
-			Task.WaitAll(deckQueryTaskList.ToArray());
+			Task.WaitAll(deckQueryTaskList.ToArray());			
 
-			Dictionary<string, Dictionary<string, CollectionCardInfo>> userToCardsDict = new Dictionary<string, Dictionary<string, CollectionCardInfo>>();
-
-			foreach(var kvp in cardCollections)
+			Dictionary<string, List<CollectionCardInfo>> userToCardsDict = new Dictionary<string, List<CollectionCardInfo>>();
+			foreach(KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>> pair in cardCollections)
 			{
-				if (kvp.Value.Values.Count == 0) continue;
-				Console.WriteLine($"User: {kvp.Key}");
-				foreach(var card in kvp.Value.Values)
-				{
-					Console.WriteLine(card.ToString());
-				}
+				userToCardsDict.Add(pair.Key, pair.Value.Values.ToList());
 			}
-			
 
-			Dictionary<string, List<DeckInfo>> userToDecksDict = deckQueryTaskList.Select(d => d.Result).ToDictionary();
-
-			//string output = CreateOutput(new List<string>(), cardQueryTaskList.Select(c => c.Result).ToDictionary(), includeDeckInfo ? deckQueryTaskList.Select(d => d.Result).ToDictionary() : null);
-			//Console.WriteLine(output);
+		    string output = CreateOutput(new List<string>(), userToCardsDict, includeDeckInfo ? deckQueryTaskList.Select(d => d.Result).ToDictionary() : null);
+			Console.WriteLine(output);
 		}
 
 		/* TODO 
@@ -492,22 +483,31 @@ namespace ArchidektCollectionQueryProject
 
 		static public async Task<JToken> QueryAchidektPageForData(string query)
 		{
-			var response = await Client.GetAsync(query);
-			// Support backing off incase of 403
-			if (response.StatusCode != System.Net.HttpStatusCode.OK)
+			try
 			{
-				// TODO: Error log here
-			}
+				var response = await Client.GetAsync(query);
+				// Support backing off incase of 403
+				if (response.StatusCode != System.Net.HttpStatusCode.OK)
+				{
+					// TODO: Error log here
+				}
 
-			string responseContent = await response.Content.ReadAsStringAsync();
-			HtmlDocument html = new HtmlDocument();
-			html.LoadHtml(responseContent);
-			HtmlNode node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
-			if (node == null)
-			{
-				throw new Exception();
+				string responseContent = await response.Content.ReadAsStringAsync();
+				HtmlDocument html = new HtmlDocument();
+				html.LoadHtml(responseContent);
+				HtmlNode node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
+				if (node == null)
+				{
+					throw new Exception($"Node was null");
+				}
+				return JToken.Parse(node.InnerHtml);
 			}
-			return JToken.Parse(node.InnerHtml);
+			catch (Exception ex)
+			{
+				Console.WriteLine($"Encountered exception: {ex}");
+				throw;
+			}
+			
 		}
 
 		static string CreateOutput(List<string> queriedCardNames, Dictionary<string, List<CollectionCardInfo>> cardsByUser, Dictionary<string, List<DeckInfo>>? deckInfoByUser)
@@ -515,14 +515,12 @@ namespace ArchidektCollectionQueryProject
             StringBuilder sb = new StringBuilder();
             foreach (string user in cardsByUser.Keys)
 			{
-				sb.Clear();
 				sb.AppendLine($"From collection: {user}");
 
                 List<CollectionCardInfo> cards = cardsByUser[user];
 				if (cards.Count == 0)
 				{
 					sb.AppendLine("\tNo cards that were queried were found.");
-					Console.WriteLine(sb.ToString());
 					continue;
 				}
 
@@ -531,6 +529,7 @@ namespace ArchidektCollectionQueryProject
 				{
 					if (!deckInfoByUser.TryGetValue(user, out decks))
 					{
+						
 						// Log failure here
 					}
 				}
@@ -547,7 +546,7 @@ namespace ArchidektCollectionQueryProject
 							{
 								if (!foundInDecks)
 								{
-									sb.AppendLine($"\t\tFound in the following {user}'s decks:");
+									sb.AppendLine($"\t\tFound in the following decks by {user}:");
 									foundInDecks = true;
 								}
 								bool inDeck = true;
@@ -560,7 +559,7 @@ namespace ArchidektCollectionQueryProject
 									}
 									categories += $"{cardCategory}, ";
 								}
-								sb.AppendLine($"\t\t{deck.DeckName} | Deck Quantity: {deckCard.Quantity} | In main deck: {inDeck} | In categories: {categories}");
+								sb.AppendLine($"\t\t\t{deck.DeckName} | Deck Quantity: {deckCard.Quantity} | In main deck: {inDeck} | In categories: {categories}");
 							}
 						}
 					}
