@@ -1,36 +1,29 @@
-﻿using HtmlAgilityPack;
-using Newtonsoft.Json.Linq;
+﻿using Newtonsoft.Json.Linq;
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 
-namespace ArchidektCollectionQueryProject
+namespace QueryLibrary
 {
-    class Program
-    {
-		// CommandLineArgs
-		static string collectionFile = "";
-		static string cardFile = "";
-		static string collectionList = "";
-		static string cardList = "";
-		static string logFile = "outputLog.txt";
-		static string outputFile = "output.txt";
-		static bool allowPartialMatches = false;
-		static bool includeDeckInfo = true;
-		static bool logToConsole = true;
-		static bool outputToConsole = true;
-		// Conststrings
+	public class ArchidektQueryTool
+	{
+		JTokenHttpClient _httpClient;
+		Logger _logger;
+		Config _config;
+
+		// Archidekt endpoints
+		const string baseArchidektUri = "https://www.archidekt.com/";
 		const string profileEndpoint = "u/";
 		const string collectionEndpoint = "collection/v2/";
 		const string deckSearchEndpoint = "search/decks";
 		const string deckEndpoint = "decks/";
+		// Html & Json identifiers
 		const string archidektDataId = "__NEXT_DATA__";
 		const string userIdJsonIndicator = "user.id";
 		const string archidektSelectStatement = $"//script[contains(@id, '{archidektDataId}')]";
 		const string totalPageIndicator = "pageProps.totalPages";
 		const string collectionCardsIndicator = "collectionV2.collectionCards";
 		const string deckPageIndicator = "results";
-		// Card fields
 		const string cardNameIndicator = "card.name";
 		const string cardQuantityIndicator = "quantity";
 		const string foilIndicator = "foil";
@@ -38,52 +31,76 @@ namespace ArchidektCollectionQueryProject
 		const string foilPriceIndicator = "prices.tcgFoil";
 		const string tcgPlayerIdIndicator = "ids.tcgId";
 
-		static HttpClient Client = new HttpClient()
-		{
-			BaseAddress = new Uri("https://www.archidekt.com/")
-		};
 
-		static async Task Main(string[] args)
-        {
+		public ArchidektQueryTool(Config config) 
+		{
+			_logger = new Logger(false, false);
+			_httpClient = new JTokenHttpClient(baseArchidektUri, _logger, 0);
+			_config = config;
+		}		
+
+		// LOG HERE
+		public void Run(string fullUsernamesInput, string fullCardsInput)
+		{
 			// Gathering required information for queries (ArchidektIDs, card names)
-			Task<HashSet<string>> usernameTask = GetUsernamesToQueryFromFile("../../../collections.txt");
-            Task<Task<List<KeyValuePair<string, string>>>> collectionTask = usernameTask.ContinueWith((t) => GetArchidektUserIDs(t.Result));
-			Task<HashSet<string>> cards = GetCardNamesFromFile("../../../cards.txt");
-			Task.WaitAll(collectionTask, cards);
+			Task<List<KeyValuePair<string, string>>> collectionTask = GetArchidektUserIDs(GetUsernamesToQueryFromString(fullUsernamesInput));
+			HashSet<string> cards = CreateCardQueryInputFromString(fullCardsInput);
+			Task.WaitAll(collectionTask);
+
 			// Query archidekt for information (cards & deck information)
-            List<Task> cardQueryTaskList = new();
-			List<Task<KeyValuePair<string, List<DeckInfo>>>> deckQueryTaskList = new();
+			List<Task> cardQueryTaskList = new();
+			List<Task<KeyValuePair<string, List<DeckInfo>>?>> deckQueryTaskList = new();
 			List<KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>>> cardCollections = new List<KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>>>();
-			foreach (KeyValuePair<string,string> collection in collectionTask.Result.Result)
+			foreach (KeyValuePair<string, string> collection in collectionTask.Result)
 			{
 				ConcurrentDictionary<int, CollectionCardInfo> cardCollection = new ConcurrentDictionary<int, CollectionCardInfo>();
 				cardCollections.Add(KeyValuePair.Create(collection.Key, cardCollection));
-				if (includeDeckInfo)
+				if (_config.IncludeDeckInfo)
 				{
 					deckQueryTaskList.Add(LoadAllDeckInfoForUser(collection.Key));
 				}
-				foreach (string card in cards.Result)
+				foreach (string card in cards)
 				{
-					cardQueryTaskList.Add(QueryCollectionForCard(cardCollection, collection.Value, card, allowPartialMatches));
+					cardQueryTaskList.Add(QueryCollectionForCard(cardCollection, collection.Value, card, _config.AllowPartialMatches));
 				}
-            }
+			}
 			Task.WaitAll(cardQueryTaskList.ToArray());
-			Task.WaitAll(deckQueryTaskList.ToArray());			
+			Task.WaitAll(deckQueryTaskList.ToArray());
 
+			// Output section
 			Dictionary<string, List<CollectionCardInfo>> userToCardsDict = new Dictionary<string, List<CollectionCardInfo>>();
-			foreach(KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>> pair in cardCollections)
+			foreach (KeyValuePair<string, ConcurrentDictionary<int, CollectionCardInfo>> pair in cardCollections)
 			{
 				userToCardsDict.Add(pair.Key, pair.Value.Values.ToList());
 			}
 
-		    string output = CreateOutput(new List<string>(), userToCardsDict, includeDeckInfo ? deckQueryTaskList.Select(d => d.Result).ToDictionary() : null);
-			Console.WriteLine(output);
+			string output = CreateOutput(new List<string>(), userToCardsDict, _config.IncludeDeckInfo ? deckQueryTaskList.Where(d => d.Result.HasValue).Select(d => d.Result!.Value).ToDictionary() : null);
+			if (_config.OutputToConsole)
+			{
+				Console.WriteLine(output);
+			}
+			if (_config.OutputToFile)
+			{
+
+			}
+		}
+		#region UserID functions
+		private HashSet<string> GetUsernamesToQueryFromString(string fullString)
+		{
+			HashSet<string> usernameSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			if (string.IsNullOrEmpty(fullString) || string.IsNullOrWhiteSpace(fullString)) return usernameSet;
+			try
+			{
+				usernameSet = fullString.Split('\n').Select(line => line.Trim()).Select(line => line.TrimEnd(',')).Where(line => !(string.IsNullOrEmpty(line) || string.IsNullOrWhiteSpace(line))).ToHashSet();
+			}
+			catch (Exception ex)
+			{
+				_logger.Log($"Failed to get usernames to query from string due to exception: {ex}");
+			}
+			return usernameSet;
 		}
 
-		/* TODO 
-		 * Logging
-		 */
-		static public async Task<List<KeyValuePair<string, string>>> GetArchidektUserIDs(HashSet<string> usernames)
+		private async Task<List<KeyValuePair<string, string>>> GetArchidektUserIDs(HashSet<string> usernames)
 		{
 			List<KeyValuePair<string, string>> result = new List<KeyValuePair<string, string>>();
 			// Associate username with the task incase of a failure
@@ -102,70 +119,34 @@ namespace ArchidektCollectionQueryProject
 				}
 				else
 				{
-					//Logging
+					_logger.Log($"Failed to find userId for username: {username} | userId was null");
 				}
 			}
 			return result;
 		}
 
-        // TODO: Support staggering retries in case of 403 error?
-        static async public Task<string?> GetArchidektUserID(string username)
-        {
-            // TODO add staggering and retries to the HTTP Client
-            var response = await Client.GetAsync(profileEndpoint + username);
-            if (response.StatusCode != System.Net.HttpStatusCode.OK)
-            {
-                // TODO: Logging here?
-                return null;
-            }
-
-            var responseContent = await response.Content.ReadAsStringAsync();
-            var html = new HtmlDocument();
-            html.LoadHtml(responseContent);
-            HtmlNode? node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
-            string? userId = JToken.Parse(node.InnerHtml)?.SelectToken($"$..{userIdJsonIndicator}")?.Value<string>();
-            return userId;
-        }
-
-        static async public Task<HashSet<string>> GetUsernamesToQueryFromFile(string path)
+		async private Task<string?> GetArchidektUserID(string username)
 		{
-            HashSet<string> usernameSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			if (string.IsNullOrEmpty(path) || string.IsNullOrWhiteSpace(path)) return usernameSet;
-			IEnumerable<string> rawUsernames = await File.ReadAllLinesAsync(path);
-			rawUsernames = rawUsernames.Select(line => line.Trim()).Select(line => line.TrimEnd(',')).Where(line => !(string.IsNullOrEmpty(line) || string.IsNullOrWhiteSpace(line)));
-
-            foreach (string rawUsername in rawUsernames)
-			{
-				usernameSet.Add(rawUsername);
-			}
-
-			return usernameSet;
+			JToken? response = await _httpClient.QueryPageForHTMLNode(profileEndpoint + username, archidektSelectStatement);
+			string? userId = response?.SelectToken($"$..{userIdJsonIndicator}")?.Value<string>();
+			return userId;
 		}
-
-		// TODO: Text box input?
-		// TODO: Cancellation logic
-		static public Task<HashSet<string>> GetCardNamesFromFile(string path)
-		{
-			List<string> lines = File.ReadAllLines(path).ToList();
-			HashSet<string> result = CreateCardQueryInputFromList(lines);
-
-			return Task.FromResult(result);
-		}
-
-		static public HashSet<string> CreateCardQueryInputFromList(List<string> input)
+		#endregion
+		#region Card functions
+		private HashSet<string> CreateCardQueryInputFromString(string input)
 		{
 			HashSet<string> result = new HashSet<string>();
-			foreach (string inputLine in input)
+			foreach (string inputLine in input.Split('\n'))
 			{
 				if (string.IsNullOrWhiteSpace(inputLine) || string.IsNullOrEmpty(inputLine)) continue;
 				string sanitizedLine = SanitizeCardInputLine(inputLine);
-                if (string.IsNullOrWhiteSpace(sanitizedLine) || string.IsNullOrEmpty(sanitizedLine)) continue;
-                result.Add(sanitizedLine);
+				if (string.IsNullOrWhiteSpace(sanitizedLine) || string.IsNullOrEmpty(sanitizedLine)) continue;
+				result.Add(sanitizedLine);
 			}
 			return result;
 		}
 
-		static public string SanitizeCardInputLine(string line)
+		private string SanitizeCardInputLine(string line)
 		{
 			string result = line;
 			result = result.Trim();
@@ -179,22 +160,22 @@ namespace ArchidektCollectionQueryProject
 				}
 			}
 
-            int firstAlphabeticCharIndex = 0;
-            for (int i = 0; i < result.Length; i++)
-            {
-                if (Char.IsLetter(result[i]))
-                {
-                    firstAlphabeticCharIndex = i;
-                    break;
-                }
-            }
+			int firstAlphabeticCharIndex = 0;
+			for (int i = 0; i < result.Length; i++)
+			{
+				if (Char.IsLetter(result[i]))
+				{
+					firstAlphabeticCharIndex = i;
+					break;
+				}
+			}
 
-            result = result.Substring(firstAlphabeticCharIndex);
-            result = result.TrimEnd(',');
+			result = result.Substring(firstAlphabeticCharIndex);
+			result = result.TrimEnd(',');
 			return result;
 		}
 
-		static public async Task QueryCollectionForCard(ConcurrentDictionary<int, CollectionCardInfo> cardCollection, string collectionId, string cardName, bool allowPartialMatches)
+		private async Task QueryCollectionForCard(ConcurrentDictionary<int, CollectionCardInfo> cardCollection, string collectionId, string cardName, bool allowPartialMatches)
 		{
 			try
 			{
@@ -212,7 +193,13 @@ namespace ArchidektCollectionQueryProject
 				do
 				{
 					string query = $"{collectionEndpoint}{collectionId}?syntaxQuery={escapedCardName}&page={currentPage}";
-					JToken json = await QueryAchidektPageForData(query);
+					JToken? json = await _httpClient.QueryPageForHTMLNode(query, archidektSelectStatement);
+					if (json == null)
+					{
+						_logger.Log($"Failed to get Archidekt page collection page JSON for card: {cardName}. Skipping this page of search results.");
+						currentPage++;
+						continue;
+					}
 
 					// If this is the first page we are parsing, parse the data for the total records / pages
 					if (currentPage == 1)
@@ -220,18 +207,21 @@ namespace ArchidektCollectionQueryProject
 						JToken? pageToken = json.SelectToken($"$..{totalPageIndicator}");
 						if (pageToken == null)
 						{
-							throw new Exception($"Failed to find the total page token");
+							_logger.Log($"Failed to find total page token for card {cardName}. Will finish searching this page but other pages won't be queried.");
 						}
-
-						// Save the total page count
-						totalPages = pageToken.Value<int>();
+						else
+						{
+							// Save the total page count
+							totalPages = pageToken.Value<int>();
+						}
 					}
 
 					// Parse the collection of cards
 					JToken? collectionToken = json.SelectToken($"$..{collectionCardsIndicator}");
 					if (collectionToken == null)
 					{
-						throw new Exception($"Failed to find card collection for card: {cardName}");
+						_logger?.Log($"Failed to find the JSON for collection card records for card: {cardName} Skipping this page of search results.");
+						continue;
 					}
 
 					foreach (JToken card in collectionToken.Children())
@@ -242,7 +232,7 @@ namespace ArchidektCollectionQueryProject
 							string? foundCardName = cardNameToken.Value<string>();
 							if (foundCardName == null)
 							{
-								Console.WriteLine($"CardNameToken's value was null");
+								_logger?.Log($"Collection card record's name was null for card name: {cardName}. Moving onto next collection record.");
 								continue;
 							}
 							if ((!allowPartialMatches && foundCardName.ToUpper() == cardName.ToUpper()) || (allowPartialMatches && foundCardName.ToUpper().Contains(cardName.ToUpper())))
@@ -254,15 +244,13 @@ namespace ArchidektCollectionQueryProject
 								}
 								else
 								{
-									Console.WriteLine($"Failed to find recordId for card: {foundCardName} | Card was not a JProperty");
+									_logger?.Log($"Failed to find recordId for card: {foundCardName} | Card was not a JProperty so continuing onto next card record.");
 									continue;
 								}
-								
 
 								// Found a match, add the info!
 								CollectionCardInfo cardInfo = new CollectionCardInfo();
 								cardInfo.Name = foundCardName;
-								cardInfo.Errors = new List<string>();
 								cardInfo.CollectionId = collectionId;
 								// Get the Quantity
 								JToken? quantityToken = card.SelectToken($"$..{cardQuantityIndicator}");
@@ -272,7 +260,7 @@ namespace ArchidektCollectionQueryProject
 								}
 								else
 								{
-									cardInfo.Errors.Add("Failed to find token for quantity");
+									_logger?.Log($"Failed to find token for quantity for found card: {foundCardName}. Record will be missing quantity info.");
 								}
 								// Get the Foil status
 								JToken? foilToken = card.SelectToken($"$..{foilIndicator}");
@@ -282,7 +270,7 @@ namespace ArchidektCollectionQueryProject
 								}
 								else
 								{
-									cardInfo.Errors.Add("Failed to find token for Foil");
+									_logger?.Log($"Failed to find token for foil for found card: {foundCardName}. Record will assume nonfoil.");
 								}
 								// Get the price
 								JToken? priceToken;
@@ -300,7 +288,7 @@ namespace ArchidektCollectionQueryProject
 								}
 								else
 								{
-									cardInfo.Errors.Add($"Failed to find price token for foil status: {cardInfo.Foil}");
+									_logger?.Log($"Failed to find TCGPlayer Price token for found card: {foundCardName}. Record will be missing price info.");
 								}
 
 								// Get the TcgPlayerId
@@ -311,7 +299,7 @@ namespace ArchidektCollectionQueryProject
 								}
 								else
 								{
-									cardInfo.Errors.Add("Failed to find TCGPlayerId");
+									_logger?.Log($"Failed to find TCGPlayer ID token for found card: {foundCardName}. Record will be missing TCGPlayer ID info.");
 								}
 
 								cardCollection.TryAdd(recordId, cardInfo);
@@ -319,8 +307,7 @@ namespace ArchidektCollectionQueryProject
 						}
 						else
 						{
-							// log something here?
-							Console.WriteLine($"Failed to find token for cardname: {cardName}");
+							_logger?.Log($"Failed to find card name token for record in query for {cardName}. Skipping any further parsing for this collection record");
 						}
 					}
 
@@ -330,17 +317,25 @@ namespace ArchidektCollectionQueryProject
 			}
 			catch (Exception ex)
 			{
-				Console.WriteLine(ex.Message);
+				_logger?.Log($"Encountered unknown exception while querying collection for {cardName}: {ex}. Returning immediately from this query");
 			}
 		}
-
-		static public async Task<KeyValuePair<string, List<DeckInfo>>> LoadAllDeckInfoForUser(string username)
+		#endregion 
+		#region Deck functions
+		private async Task<KeyValuePair<string, List<DeckInfo>>?> LoadAllDeckInfoForUser(string username)
 		{
 			List<DeckInfo> decks = new List<DeckInfo>();
 			string query = $"{deckSearchEndpoint}?ownerUsername={username}";
-			JToken json = await QueryAchidektPageForData(query);
+			JToken? json = await _httpClient.QueryPageForHTMLNode(query, archidektSelectStatement);
+			if (json == null)
+			{
+				_logger?.Log($"Failed to find Archidekt page JSON data for user {username}. Their DeckInfo list will be null");
+				return null;
+			}
+
 			JToken? resultsToken = json.SelectToken($"$..{deckPageIndicator}");
-			List<Task<DeckInfo>> deckQueryTasks = new List<Task<DeckInfo>>();
+
+			List<Task<DeckInfo?>> deckQueryTasks = new List<Task<DeckInfo?>>();
 			if (resultsToken != null)
 			{
 				foreach (JToken result in resultsToken.Children())
@@ -357,37 +352,36 @@ namespace ArchidektCollectionQueryProject
 						}
 						else
 						{
-							Console.WriteLine("DeckId was NULL");
+							_logger?.Log($"Failed to get a string value for deck ID or deck name for user {username}. Not attempting to load this particular DeckInfo");
 						}
 					}
 					else
 					{
-						Console.WriteLine("DeckIdToken was NULL");
+						_logger?.Log($"Failed to find JSON token for deck ID or deck name for user {username}. Not attempting to load this particular DeckInfo");
 					}
 				}
 			}
 			else
 			{
-				Console.WriteLine("Deck results was NULL");
+				_logger?.Log($"Failed to find deck info JSON container for user {username}. Empty DeckInfo array will be returned");
 			}
-			DeckInfo[]? deckInfo = await Task.WhenAll(deckQueryTasks.ToArray());
-			if (deckInfo != null)
-			{
-				decks = deckInfo.ToList();
-			}
-			else
-			{
-				// Log here
-			}
+			DeckInfo?[] deckInfo = await Task.WhenAll(deckQueryTasks.ToArray());
+			decks = deckInfo.Where(d => d.HasValue).Select(d => d!.Value).ToList();
+
 			return new KeyValuePair<string, List<DeckInfo>>(username, decks);
 		}
 
-		static public async Task<DeckInfo> LoadDeckInfo(string deckName, string deckId)
+		private async Task<DeckInfo?> LoadDeckInfo(string deckName, string deckId)
 		{
 			DeckInfo result = new DeckInfo();
 			result.DeckName = deckName;
 			string query = $"{deckEndpoint}{deckId}/";
-			JToken deckJson = await QueryAchidektPageForData(query);
+			JToken? deckJson = await _httpClient.QueryPageForHTMLNode(query, archidektSelectStatement);
+			if (deckJson == null)
+			{
+				_logger?.Log($"Failed to find Archidekt page JSON data for deckName: {deckName}. Will return null DeckInfo");
+				return null;
+			}
 
 			JToken? categoryToken = deckJson.SelectToken("$..deck.categories");
 			if (categoryToken != null)
@@ -396,7 +390,7 @@ namespace ArchidektCollectionQueryProject
 			}
 			else
 			{
-				// Log here
+				_logger?.Log($"Failed to find category JSON token for deck {deckName}. CategoryInfo for this deck will be null");
 			}
 
 			Dictionary<int, CollectionCardInfo> cards = new Dictionary<int, CollectionCardInfo>();
@@ -407,14 +401,14 @@ namespace ArchidektCollectionQueryProject
 				{
 					CollectionCardInfo cardInfo = new CollectionCardInfo();
 
-                    string? name = token.SelectTokens("$..name")?.Select(t => t.Value<string>()).FirstOrDefault(s => !string.IsNullOrEmpty(s));
-                    if (!string.IsNullOrEmpty(name))
+					string? name = token.SelectTokens("$..name")?.Select(t => t.Value<string>()).FirstOrDefault(s => !string.IsNullOrEmpty(s));
+					if (!string.IsNullOrEmpty(name))
 					{
 						cardInfo.Name = name;
 					}
 					else
 					{
-						Console.WriteLine($"Failed to find name of card for deckId: {deckId}");
+						_logger?.Log($"Failed to find name of card for deck: {deckName}. This card will not be added to current deck info");
 						continue;
 					}
 					int? tcgId = token.SelectToken("$..ids.tcgId")?.Value<int>();
@@ -424,7 +418,7 @@ namespace ArchidektCollectionQueryProject
 					}
 					else
 					{
-						Console.WriteLine($"Failed to find tcgId for card: {name}");
+						_logger?.Log($"Failed to find TcgPlayerId of card {name} for deck: {deckName}. This card will not be added to current deck info");
 						continue;
 					}
 					IEnumerable<string?>? cardCategories = token.SelectToken("$..categories")?.Values<string>();
@@ -434,7 +428,7 @@ namespace ArchidektCollectionQueryProject
 					}
 					else
 					{
-						Console.WriteLine($"Failed to find categories for card: {name}");
+						_logger?.Log($"Failed to find categories for card: {name} for deck: {deckName}. Card will be missing category info");
 					}
 					int? qty = token.SelectToken("$..qty")?.Value<int>();
 					if (qty != null)
@@ -443,18 +437,18 @@ namespace ArchidektCollectionQueryProject
 					}
 					else
 					{
-						Console.WriteLine($"Failed to find quantity for card name: {name}");
+						_logger?.Log($"Failed to find quantity for card: {name} for deck: {deckName}. Card will be missing quantity");
 					}
 
 					cards.Add(tcgId.Value, cardInfo);
 				}
 			}
 			result.CardsByTcgId = cards;
-			
+
 			return result;
 		}
 
-		static public Dictionary<string, bool> GetCategoryInformationFromDeck(JToken categoryToken)
+		private Dictionary<string, bool> GetCategoryInformationFromDeck(JToken categoryToken)
 		{
 			Dictionary<string, bool> result = new Dictionary<string, bool>();
 			foreach (JToken category in categoryToken.Children())
@@ -462,62 +456,35 @@ namespace ArchidektCollectionQueryProject
 				string? categoryName = category.SelectToken("$..name")?.Value<string>();
 				if (categoryName == null)
 				{
+					_logger?.Log("Failed to find category name... Skipping adding this category");
 					continue;
 				}
 
 				bool? inDeck = category.SelectToken("$..includedInDeck")?.Value<bool>();
 				if (inDeck != null)
 				{
-                    // Special condition for Sideboard to not be included in the deck
-                    if (categoryName == "Sideboard") inDeck = false;
+					// Special condition for Sideboard to not be included in the deck
+					if (categoryName == "Sideboard") inDeck = false;
 
-                    result.Add(categoryName, inDeck.Value);
-                }
+					result.Add(categoryName, inDeck.Value);
+				}
 				else
 				{
-					// Log here
+					_logger?.Log($"Failed to find {categoryName}'s InDeck status... Skipping adding this category");
 				}
 			}
 			return result;
 		}
+		#endregion
 
-		static public async Task<JToken> QueryAchidektPageForData(string query)
+		private string CreateOutput(List<string> queriedCardNames, Dictionary<string, List<CollectionCardInfo>> cardsByUser, Dictionary<string, List<DeckInfo>>? deckInfoByUser)
 		{
-			try
-			{
-				var response = await Client.GetAsync(query);
-				// Support backing off incase of 403
-				if (response.StatusCode != System.Net.HttpStatusCode.OK)
-				{
-					// TODO: Error log here
-				}
-
-				string responseContent = await response.Content.ReadAsStringAsync();
-				HtmlDocument html = new HtmlDocument();
-				html.LoadHtml(responseContent);
-				HtmlNode node = html.DocumentNode.SelectSingleNode(archidektSelectStatement);
-				if (node == null)
-				{
-					throw new Exception($"Node was null");
-				}
-				return JToken.Parse(node.InnerHtml);
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"Encountered exception: {ex}");
-				throw;
-			}
-			
-		}
-
-		static string CreateOutput(List<string> queriedCardNames, Dictionary<string, List<CollectionCardInfo>> cardsByUser, Dictionary<string, List<DeckInfo>>? deckInfoByUser)
-		{
-            StringBuilder sb = new StringBuilder();
-            foreach (string user in cardsByUser.Keys)
+			StringBuilder sb = new StringBuilder();
+			foreach (string user in cardsByUser.Keys)
 			{
 				sb.AppendLine($"From collection: {user}");
 
-                List<CollectionCardInfo> cards = cardsByUser[user];
+				List<CollectionCardInfo> cards = cardsByUser[user];
 				if (cards.Count == 0)
 				{
 					sb.AppendLine("\tNo cards that were queried were found.");
@@ -525,16 +492,15 @@ namespace ArchidektCollectionQueryProject
 				}
 
 				List<DeckInfo>? decks = null;
-				if (includeDeckInfo && deckInfoByUser != null)
+				if (deckInfoByUser != null)
 				{
 					if (!deckInfoByUser.TryGetValue(user, out decks))
 					{
-						
-						// Log failure here
+						sb.AppendLine("\tFailed to load decks for user.");
 					}
 				}
-				
-				foreach(CollectionCardInfo card in cards)
+
+				foreach (CollectionCardInfo card in cards)
 				{
 					sb.AppendLine($"\t- {card.Quantity}x {card.Name} | TcgPlayer Price: {card.Price:C2} | Foil: {card.Foil}");
 					if (decks != null && decks.Count > 0)
@@ -542,7 +508,7 @@ namespace ArchidektCollectionQueryProject
 						bool foundInDecks = false;
 						foreach (DeckInfo deck in decks)
 						{
-							if(deck.CardsByTcgId.TryGetValue(card.TcgPlayerId, out CollectionCardInfo deckCard))
+							if (deck.CardsByTcgId.TryGetValue(card.TcgPlayerId, out CollectionCardInfo deckCard))
 							{
 								if (!foundInDecks)
 								{
@@ -551,7 +517,7 @@ namespace ArchidektCollectionQueryProject
 								}
 								bool inDeck = true;
 								string categories = "";
-								foreach(string cardCategory in deckCard.Categories)
+								foreach (string cardCategory in deckCard.Categories)
 								{
 									if (deck.CategoryInfo.TryGetValue(cardCategory, out bool includedInDeck))
 									{
@@ -578,7 +544,6 @@ namespace ArchidektCollectionQueryProject
 			public bool Foil;
 			public float Price;
 			public int TcgPlayerId;
-			public List<string> Errors;
 			public List<string> Categories;
 
 			public override string ToString()

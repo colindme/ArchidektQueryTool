@@ -1,0 +1,77 @@
+﻿<Window x:Class="ArchidektQueryGUI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ArchidektQueryGUI"
+        mc:Ignorable="d"
+        Title="ArchidektQueryTool" Height="450" Width="800">
+    <Grid Margin="10px">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Grid Grid.Column="0" Grid.Row="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Label Grid.Column="0" Grid.Row="0" FontSize="15" FontWeight="Bold" Target="{Binding ElementName=usernameBox}">List of Archidekt _Usernames:</Label>
+            <TextBox Grid.Column="0" Grid.Row="1" Margin="5,0" Name="usernameBox" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"></TextBox>
+            <StackPanel Grid.Column="0" Grid.Row="2">
+                <StackPanel Orientation="Horizontal">
+                    <Label VerticalAlignment="Center" Target="{Binding ElementName=usernameImportButton}">_Import username list from file</Label>
+                    <TextBlock FontSize="10" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Italic>(Note: will overwrite currently present values)</Italic></TextBlock>
+                </StackPanel>
+                <Button Margin="5,0,0,0" FontSize="11" Name="usernameImportButton" HorizontalAlignment="Left" Click="usernameImportButton_Click">Import Usernames</Button>
+                <Border CornerRadius="8" Background="LightGray" Margin="0,10,0,10" >
+                    <StackPanel>
+                        <Label FontSize="15" FontWeight="Bold">Additional Options:</Label>
+                        <CheckBox Margin="10,0,0,0" Name="allowPartialMatchesBox">_Allow Partial Matches</CheckBox>
+                        <CheckBox IsChecked="True" Margin="10,0,0,0" Name="includeUserDeckInfoBox">Include User _Deck Info</CheckBox>
+                        <TextBlock>Output mode dropdown here</TextBlock>
+                        <CheckBox IsChecked="True" Margin="10,0,0,0" Name="openOutputAutomaticallyBox">O_pen Output Automatically</CheckBox>
+                        <TextBlock>Output File Name</TextBlock>
+                        <CheckBox IsChecked="True" Margin="10,0,0,10" Name="createLogFileBox">C_reate Log File</CheckBox>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Column="1" Grid.Row="0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Label Grid.Column="0" Grid.Row="0" FontSize="15" FontWeight="Bold" Target="{Binding ElementName=cardsBox}">List of _Cards to Query:</Label>
+            <TextBox Grid.Column="0" Grid.Row="1" Margin="5,0" Name="cardsBox" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"></TextBox>
+            <StackPanel Grid.Column="0" Grid.Row="2">
+                <StackPanel Orientation="Horizontal">
+                    <Label VerticalAlignment="Center" Target="{Binding ElementName=cardsImportButton}">I_mport cards list from file</Label>
+                    <TextBlock FontSize="10" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Italic>(Note: will overwrite currently present values)</Italic></TextBlock>
+                </StackPanel>
+                <Button Margin="5,0,0,0" FontSize="11" Name="cardsImportButton" HorizontalAlignment="Left" Click="cardsImportButton_Click">Import Cards</Button>
+                <ProgressBar Margin="7" MinHeight="20" Height="30"></ProgressBar>
+                <DockPanel>
+                    <Button Margin="5,0,5,0" DockPanel.Dock="Right" Name="runQueryButton" Click="runQueryButton_Click">_Run Query</Button>
+                    <TextBlock Margin="5,0,0,0">This is where errors will go</TextBlock>
+                </DockPanel>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>
