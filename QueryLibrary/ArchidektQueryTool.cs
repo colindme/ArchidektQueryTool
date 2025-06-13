@@ -7,9 +7,9 @@ namespace QueryLibrary
 {
 	public class ArchidektQueryTool
 	{
-		JTokenHttpClient _httpClient;
-		Logger _logger;
-		Config _config;
+		readonly JTokenHttpClient _httpClient;
+		readonly Logger _logger;
+		readonly Config _config;
 
 		// Archidekt endpoints
 		const string baseArchidektUri = "https://www.archidekt.com/";
@@ -39,13 +39,13 @@ namespace QueryLibrary
 			_config = config;
 		}		
 
-		// LOG HERE
+		// TODO: Add callback func to report progress to callers (enum QueryStage?)
 		public void Run(string fullUsernamesInput, string fullCardsInput)
 		{
 			// Gathering required information for queries (ArchidektIDs, card names)
 			Task<List<KeyValuePair<string, string>>> collectionTask = GetArchidektUserIDs(GetUsernamesToQueryFromString(fullUsernamesInput));
 			HashSet<string> cards = CreateCardQueryInputFromString(fullCardsInput);
-			Task.WaitAll(collectionTask);
+			collectionTask.Wait();
 
 			// Query archidekt for information (cards & deck information)
 			List<Task> cardQueryTaskList = new();
@@ -74,14 +74,14 @@ namespace QueryLibrary
 				userToCardsDict.Add(pair.Key, pair.Value.Values.ToList());
 			}
 
-			string output = CreateOutput(new List<string>(), userToCardsDict, _config.IncludeDeckInfo ? deckQueryTaskList.Where(d => d.Result.HasValue).Select(d => d.Result!.Value).ToDictionary() : null);
+			string output = CreateOutput(cards, userToCardsDict, _config.IncludeDeckInfo ? deckQueryTaskList.Where(d => d.Result.HasValue).Select(d => d.Result!.Value).ToDictionary() : null);
 			if (_config.OutputToConsole)
 			{
 				Console.WriteLine(output);
 			}
 			if (_config.OutputToFile)
 			{
-
+				// TODO: Logic here
 			}
 		}
 		#region UserID functions
@@ -196,7 +196,7 @@ namespace QueryLibrary
 					JToken? json = await _httpClient.QueryPageForHTMLNode(query, archidektSelectStatement);
 					if (json == null)
 					{
-						_logger.Log($"Failed to get Archidekt page collection page JSON for card: {cardName}. Skipping this page of search results.");
+						_logger?.Log($"Failed to get Archidekt page collection page JSON for card: {cardName}. Skipping this page of search results.");
 						currentPage++;
 						continue;
 					}
@@ -207,7 +207,7 @@ namespace QueryLibrary
 						JToken? pageToken = json.SelectToken($"$..{totalPageIndicator}");
 						if (pageToken == null)
 						{
-							_logger.Log($"Failed to find total page token for card {cardName}. Will finish searching this page but other pages won't be queried.");
+							_logger?.Log($"Failed to find total page token for card {cardName}. Will finish searching this page but other pages won't be queried.");
 						}
 						else
 						{
@@ -235,7 +235,8 @@ namespace QueryLibrary
 								_logger?.Log($"Collection card record's name was null for card name: {cardName}. Moving onto next collection record.");
 								continue;
 							}
-							if ((!allowPartialMatches && foundCardName.ToUpper() == cardName.ToUpper()) || (allowPartialMatches && foundCardName.ToUpper().Contains(cardName.ToUpper())))
+							if ((!allowPartialMatches && string.Equals(foundCardName, cardName, StringComparison.OrdinalIgnoreCase)) 
+								|| (allowPartialMatches && foundCardName.Contains(cardName, StringComparison.OrdinalIgnoreCase)))
 							{
 								int recordId;
 								if (card is JProperty property)
@@ -477,7 +478,7 @@ namespace QueryLibrary
 		}
 		#endregion
 
-		private string CreateOutput(List<string> queriedCardNames, Dictionary<string, List<CollectionCardInfo>> cardsByUser, Dictionary<string, List<DeckInfo>>? deckInfoByUser)
+		private string CreateOutput(HashSet<string> queriedCardNames, Dictionary<string, List<CollectionCardInfo>> cardsByUser, Dictionary<string, List<DeckInfo>>? deckInfoByUser)
 		{
 			StringBuilder sb = new StringBuilder();
 			foreach (string user in cardsByUser.Keys)
@@ -502,6 +503,17 @@ namespace QueryLibrary
 
 				foreach (CollectionCardInfo card in cards)
 				{
+					if (_config.AllowPartialMatches)
+					{
+						foreach(string queriedCard in queriedCardNames)
+						{
+							if (card.Name.Contains(queriedCard, StringComparison.OrdinalIgnoreCase)) queriedCardNames.Remove(queriedCard);
+						}
+					}
+					else
+					{
+						queriedCardNames.Remove(card.Name);
+					}
 					sb.AppendLine($"\t- {card.Quantity}x {card.Name} | TcgPlayer Price: {card.Price:C2} | Foil: {card.Foil}");
 					if (decks != null && decks.Count > 0)
 					{
@@ -531,7 +543,12 @@ namespace QueryLibrary
 					}
 				}
 			}
-			// Cards not found in anyone's collection section
+			// Cards not found section
+			sb.AppendLine("\nCards not found in any collection:");
+			foreach (string card in queriedCardNames)
+			{
+				sb.AppendLine(card);
+			}
 
 			return sb.ToString();
 		}

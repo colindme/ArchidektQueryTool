@@ -2,70 +2,96 @@
 using System.Text;
 using QueryLibrary;
 
-namespace ArchidektCollectionQueryProject
+namespace ArchidektQueryCommandLine
 {
-    class Program
-    {
-		Config _config = new Config();
-		string _cardFileName = "";
-		string _usernameFileName = "";
+	class Program
+	{
+		static readonly Config _config = new Config();
+		static string _cardFileName = "";
+		static string _usernameFileName = "";
 
-		public void Main(string[] args)
-        {
+		public static void Main(string[] args)
+		{
 			try
 			{
 				// Initialize (load command line arguments & initialize logger)
-				ParseCommandLineArgs(args);
-				ArchidektQueryTool queryTool = new ArchidektQueryTool(_config);
-				string fullCardsText = File.ReadAllText(_cardFileName);
-				string fullUsernameText = File.ReadAllText(_usernameFileName);
-				queryTool.Run(fullUsernameText, fullCardsText);
+				if (ParseCommandLineArgs(args))
+				{
+					ArchidektQueryTool queryTool = new ArchidektQueryTool(_config);
+					string fullCardsText = File.ReadAllText(_cardFileName);
+					string fullUsernameText = File.ReadAllText(_usernameFileName);
+					queryTool.Run(fullUsernameText, fullCardsText);
+				}
 			}
 			catch (Exception ex)
 			{
-
+				Console.WriteLine($"ERROR: Encountered unhandled exception: {ex.Message}");
 			}
 		}
 
-		private bool ParseCommandLineArgs(string[] args)
+		private static bool ParseCommandLineArgs(string[] args)
 		{
-			for(int i = 0; i < args.Length - 1; i++)
+			bool cardFileSet = false, usernameFileSet = false;
+
+			if (args.Length == 0)
 			{
+				Console.WriteLine($"ERROR: Required command line arguments not passed in. Please use -Help, /?, or -h to get more information.");
+			}
+
+			for (int i = 0; i < args.Length; i++)
+			{
+				if (args[i] == "-Help" || args[i] == "/?" || args[i] == "-h")
+				{
+					Console.WriteLine(GetHelpString());
+					return false;
+				}
+
 				if (!args[i].StartsWith('-'))
 				{
 					Console.WriteLine($"Unknown flag {args[i]} | Make sure command line flags are prepended with a -");
 					continue;
 				}
+				// Every other command line flag requires a followup argument so if we are at the end of the array, we can't discern anymore info 
+				if (i == args.Length - 1) continue;
+
 				string argInput = args[i + 1];
 				try
 				{
 					switch (args[i])
 					{
 						case "-CardListFilePath":
-							if(IsStringValidPath(argInput))
+							if (IsStringValidPath(argInput))
 							{
 								_cardFileName = argInput;
+								cardFileSet = true;
+								i++;
 							}
 							else
 							{
 								Console.WriteLine("ERROR: Failed to load card list because passed in argument had invalid characters");
+								return false;
 							}
 							break;
 						case "-UsernameListFilePath":
 							if (IsStringValidPath(argInput))
 							{
 								_usernameFileName = argInput;
+								usernameFileSet = true;
+								i++;
 							}
 							else
 							{
 								Console.WriteLine("ERROR: Failed to load Archidekt username list because passed in argument had invalid characters");
+								return false;
 							}
 							break;
 						case "-AllowPartialMatches":
 							_config.AllowPartialMatches = bool.Parse(argInput);
+							i++;
 							break;
 						case "-IncludeDeckInfo":
 							_config.IncludeDeckInfo = bool.Parse(argInput);
+							i++;
 							break;
 						case "-LogFilePath":
 							if (IsStringValidPath(argInput))
@@ -76,18 +102,23 @@ namespace ArchidektCollectionQueryProject
 							{
 								Console.WriteLine("ERROR: Passed in -LogFilePath argument had invalid characters");
 							}
+							i++;
 							break;
 						case "-LogToConsole":
 							_config.LogToConsole = bool.Parse(argInput);
+							i++;
 							break;
 						case "-LogToFile":
 							_config.LogToFile = bool.Parse(argInput);
+							i++;
 							break;
 						case "-MaxRetries":
 							_config.MaxRetries = int.Parse(argInput);
+							i++;
 							break;
 						case "-OpenOutputAutomatically":
 							_config.OpenOutputAutomatically = bool.Parse(argInput);
+							i++;
 							break;
 						case "-OutputFilePath":
 							if (IsStringValidPath(argInput))
@@ -98,6 +129,7 @@ namespace ArchidektCollectionQueryProject
 							{
 								Console.WriteLine("ERROR: Passed in -OutputFilePath argument had invalid characters");
 							}
+							i++;
 							break;
 						case "-OutputFileType":
 							if (Enum.TryParse(argInput, out Config.OutputMode result))
@@ -108,12 +140,15 @@ namespace ArchidektCollectionQueryProject
 							{
 								Console.WriteLine("ERROR: Failed to parse passed in value to OutputMode. Valid options are TextFile or HtmlFile. Defaulting to TextFile");
 							}
+							i++;
 							break;
 						case "-OutputToConsole":
 							_config.OutputToConsole = bool.Parse(argInput);
+							i++;
 							break;
 						case "-OutputToFile":
 							_config.OutputToFile = bool.Parse(argInput);
+							i++;
 							break;
 						default:
 							Console.WriteLine("WARNING: Unknown flag passed in, skipping...");
@@ -125,20 +160,21 @@ namespace ArchidektCollectionQueryProject
 					Console.WriteLine($"ERROR: Encountered exception while attempting to parse command line argument {args[i]} with value {argInput} | Exception: {ex}");
 				}
 			}
-			return true;
+
+			return cardFileSet && usernameFileSet;
 		}
 
-		private bool IsStringValidPath(string s)
+		private static bool IsStringValidPath(string s)
 		{
 			char[] invalidChars = Path.GetInvalidPathChars();
-			foreach (char c  in s)
+			foreach (char c in s)
 			{
 				if (invalidChars.Contains(c)) return false;
 			}
 			return true;
 		}
 
-		private string GetHelpString()
+		private static string GetHelpString()
 		{
 			StringBuilder sb = new StringBuilder();
 			sb.AppendLine("Archidekt Query Command Line Tool Help");
@@ -203,14 +239,42 @@ namespace ArchidektCollectionQueryProject
 			sb.AppendLine("Required: No");
 			sb.AppendLine("Default: TextFile");
 			sb.AppendLine("Accepts: TextFile or HtmlFile");
-			sb.AppendLine("Description: Determines the format for the Output file. ");
+			sb.AppendLine("Description: Determines the format for the Output file. TextFile is more minimal while HtmlFile includes some additional formatting as well as image links");
 
 			// -OutputToConsole
+			sb.AppendLine("\n-OutputToConsole");
+			sb.AppendLine("Required: No");
+			sb.AppendLine("Default: True");
+			sb.AppendLine("Accepts: True/False");
+			sb.AppendLine("Description: If set to True, the output will be printed to the Console after the query is done querying.");
+
 			// -OutputToFile
+			sb.AppendLine("\n-OutputToFile");
+			sb.AppendLine("Required: No");
+			sb.AppendLine("Default: True");
+			sb.AppendLine("Accepts: True/False");
+			sb.AppendLine("Description: If set to True, the output will be saved to a file after the query is done querying.");
+
 			// -Help / -? / -h
+			sb.AppendLine("\n-Help | -? | -h");
+			sb.AppendLine("Required: No");
+			sb.AppendLine("Default: N/A");
+			sb.AppendLine("Accepts: N/A");
+			sb.AppendLine("Description: If set to True, the output file will automatically be opened upon completion of querys. Ignored if -OutputToFile is set to False.");
+
 			// -CardListFilePath
 			sb.AppendLine("\n-CardListFilePath");
+			sb.AppendLine("Required: Yes");
+			sb.AppendLine("Default: N/A");
+			sb.AppendLine("Accepts: string path");
+			sb.AppendLine("Description: The path of the file which contains the list of cards to be queried. Each entry is expected to be new-line separated");
+
 			// -UsernameListFilePath
+			sb.AppendLine("\n-UsernameListFilePath");
+			sb.AppendLine("Required: Yes");
+			sb.AppendLine("Default: N/A");
+			sb.AppendLine("Accepts: string path");
+			sb.AppendLine("Description: The path of the file which contains the list of Archidekt usernames to be queried. Each entry is expected to be new-line separated");
 
 			return sb.ToString();
 		}
