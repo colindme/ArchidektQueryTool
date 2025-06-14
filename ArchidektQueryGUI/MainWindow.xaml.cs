@@ -72,6 +72,8 @@ namespace ArchidektQueryGUI
 
 		private void runQueryButton_Click(object sender, RoutedEventArgs e)
 		{
+			runQueryButton.IsEnabled = false;
+
 			List<string> usernames = usernameBox.Text.Split('\n').Where(u => !(string.IsNullOrWhiteSpace(u) || string.IsNullOrEmpty(u))).ToList();
 			List<string> cards = cardsBox.Text.Split('\n').Where(u => !(string.IsNullOrWhiteSpace(u) || string.IsNullOrEmpty(u))).ToList();
 

@@ -53,7 +53,7 @@ namespace QueryLibrary
 						else
 						{
 							// Failed
-							throw new Exception();
+							throw new Exception($"Got status code: {response.StatusCode}");
 						}
 					}
 
@@ -73,7 +73,7 @@ namespace QueryLibrary
 			catch (Exception ex)
 			{
 				_logger.Log("");
-				Console.WriteLine($"Encountered exception: {ex}");
+				Console.WriteLine($"Encountered exception for query: {query} | exception: {ex.Message}");
 				return null;
 			}
 		}

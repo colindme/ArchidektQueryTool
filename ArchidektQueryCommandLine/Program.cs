@@ -20,7 +20,7 @@ namespace ArchidektQueryCommandLine
 					ArchidektQueryTool queryTool = new ArchidektQueryTool(_config);
 					string fullCardsText = File.ReadAllText(_cardFileName);
 					string fullUsernameText = File.ReadAllText(_usernameFileName);
-					queryTool.Run(fullUsernameText, fullCardsText);
+					queryTool.Run(fullUsernameText, fullCardsText, OnProgressReport);
 				}
 			}
 			catch (Exception ex)
@@ -172,6 +172,27 @@ namespace ArchidektQueryCommandLine
 				if (invalidChars.Contains(c)) return false;
 			}
 			return true;
+		}
+
+		private static void OnProgressReport(QueryProgress progress)
+		{
+			switch (progress)
+			{
+				case QueryProgress.GatheringQueryInfo:
+					Console.WriteLine("Gathering query info");
+					break;
+				case QueryProgress.StartingQuery:
+                    Console.WriteLine("Starting Archidekt query");
+                    break;
+				case QueryProgress.CreatingOutput:
+                    Console.WriteLine("Creating query from results");
+                    break;
+				case QueryProgress.Done:
+                    Console.WriteLine("Finished query");
+                    break;
+				default:
+					break;
+			}
 		}
 
 		private static string GetHelpString()
