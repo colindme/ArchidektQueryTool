@@ -29,7 +29,7 @@ namespace QueryLibrary
 		// Todo: Cancellation logic
 		// Todo: Infinite retries (except for cancellation)
 		// LOG HERE
-		public async Task<JToken?> QueryPageForHTMLNode(string query, string htmlSelectStatement)
+		public async Task<JToken?> QueryPageForHTMLNode(string query, string htmlSelectStatement, CancellationToken token)
 		{
 			int retries = 0;
 			try

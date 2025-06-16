@@ -53,13 +53,18 @@ namespace QueryLibrary
 		}
 
 		// TODO: Add callback func to report progress to callers (enum QueryStage?)
-		public Task Run(string fullUsernamesInput, string fullCardsInput, Action<QueryProgress> progressCallback)
+		public Task Run(string fullUsernamesInput, string fullCardsInput, Action<QueryProgress> progressCallback, CancellationToken cancellationToken)
 		{
 			// Gathering required information for queries (ArchidektIDs, card names)
 			progressCallback?.Invoke(QueryProgress.GatheringQueryInfo);
 			Task<List<KeyValuePair<string, string>>> collectionTask = GetArchidektUserIDs(GetUsernamesToQueryFromString(fullUsernamesInput));
 			HashSet<string> cards = CreateCardQueryInputFromString(fullCardsInput);
 			collectionTask.Wait();
+			if (cancellationToken.IsCancellationRequested)
+			{
+				progressCallback?.Invoke(QueryProgress.Canceled);
+				return Task.FromCanceled(cancellationToken);
+			}
 
 			// Query archidekt for information (cards & deck information)
 			progressCallback?.Invoke(QueryProgress.StartingQuery);
