@@ -13,11 +13,16 @@ namespace QueryLibrary
 		private const int _baseBackOffTimeMs = 1000;
 		private const int _maxBackoffJitterMs = 10000;
 		private const float _backoffExponentialFactorScaling = 0.5f;
-		readonly private float _maxRetries;
+		private float _maxRetries;
 		public JTokenHttpClient(string baseAddress, Logger logger, int maxRetries)
 		{
 			_client.BaseAddress = new Uri(baseAddress);
 			_logger = logger;
+			_maxRetries = maxRetries;
+		}
+
+		public void SetNewMaxRetries(int maxRetries)
+		{
 			_maxRetries = maxRetries;
 		}
 
@@ -53,7 +58,7 @@ namespace QueryLibrary
 						else
 						{
 							// Failed
-							throw new Exception($"Got status code: {response.StatusCode}");
+							throw new Exception();
 						}
 					}
 
@@ -73,7 +78,7 @@ namespace QueryLibrary
 			catch (Exception ex)
 			{
 				_logger.Log("");
-				Console.WriteLine($"Encountered exception for query: {query} | exception: {ex.Message}");
+				Console.WriteLine($"Encountered exception: {ex}");
 				return null;
 			}
 		}

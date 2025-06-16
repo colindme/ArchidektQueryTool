@@ -9,7 +9,7 @@ namespace QueryLibrary
 	{
 		readonly JTokenHttpClient _httpClient;
 		readonly Logger _logger;
-		readonly Config _config;
+		private Config _config;
 
 		// Archidekt endpoints
 		const string baseArchidektUri = "https://www.archidekt.com/";
@@ -35,12 +35,25 @@ namespace QueryLibrary
 		public ArchidektQueryTool(Config config) 
 		{
 			_logger = new Logger(false, false);
-			_httpClient = new JTokenHttpClient(baseArchidektUri, _logger, 0);
+			_httpClient = new JTokenHttpClient(baseArchidektUri, _logger, config.MaxRetries);
 			_config = config;
-		}		
+		}
+		
+		public ArchidektQueryTool()
+		{
+			_logger = new Logger(false, false);
+			_httpClient = new JTokenHttpClient(baseArchidektUri, _logger, 0);
+			_config = new Config();
+		}
+
+		public void SetNewConfig(Config newConfig)
+		{
+			_config = newConfig;
+			_httpClient.SetNewMaxRetries(newConfig.MaxRetries);
+		}
 
 		// TODO: Add callback func to report progress to callers (enum QueryStage?)
-		public void Run(string fullUsernamesInput, string fullCardsInput, Action<QueryProgress> progressCallback)
+		public Task Run(string fullUsernamesInput, string fullCardsInput, Action<QueryProgress> progressCallback)
 		{
 			// Gathering required information for queries (ArchidektIDs, card names)
 			progressCallback?.Invoke(QueryProgress.GatheringQueryInfo);
@@ -77,17 +90,30 @@ namespace QueryLibrary
 				userToCardsDict.Add(pair.Key, pair.Value.Values.ToList());
 			}
 
-			string output = CreateOutput(cards, userToCardsDict, _config.IncludeDeckInfo ? deckQueryTaskList.Where(d => d.Result.HasValue).Select(d => d.Result!.Value).ToDictionary() : null);
-			if (_config.OutputToConsole)
+			try
 			{
-				Console.WriteLine(output);
+				string output = CreateOutput(cards, userToCardsDict, _config.IncludeDeckInfo ? deckQueryTaskList.Where(d => d.Result.HasValue).Select(d => d.Result!.Value).ToDictionary() : null);
+				if (_config.OutputToConsole)
+				{
+					Console.WriteLine(output);
+				}
+				if (_config.OutputToFile)
+				{
+					// TODO: Logic here
+					if (_config.OpenOutputAutomatically)
+					{
+
+					}
+				}
 			}
-			if (_config.OutputToFile)
+			catch(Exception ex)
 			{
-				// TODO: Logic here
+
 			}
+			
 
 			progressCallback?.Invoke(QueryProgress.Done);
+			return Task.CompletedTask;
 		}
 		#region UserID functions
 		private HashSet<string> GetUsernamesToQueryFromString(string fullString)

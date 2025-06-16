@@ -37,12 +37,37 @@
                 <Border CornerRadius="8" Background="LightGray" Margin="0,10,0,10" >
                     <StackPanel>
                         <Label FontSize="15" FontWeight="Bold">Additional Options:</Label>
-                        <CheckBox Margin="10,0,0,0" Name="allowPartialMatchesBox">_Allow Partial Matches</CheckBox>
-                        <CheckBox IsChecked="True" Margin="10,0,0,0" Name="includeUserDeckInfoBox">Include User _Deck Info</CheckBox>
-                        <TextBlock>Output mode dropdown here</TextBlock>
-                        <CheckBox IsChecked="True" Margin="10,0,0,0" Name="openOutputAutomaticallyBox">O_pen Output Automatically</CheckBox>
-                        <TextBlock>Output File Name</TextBlock>
-                        <CheckBox IsChecked="True" Margin="10,0,0,10" Name="createLogFileBox">C_reate Log File</CheckBox>
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox Margin="10,0,5,0" Name="allowPartialMatchesBox">_Allow Partial Matches</CheckBox>
+                            <TextBlock ToolTip="If checked, card names will be checked for a non-exact match. So 'Snap' could return 'Snapping Voidcraw'. Useful if not using a list of exact card names.">&#x24D8;</TextBlock>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox IsChecked="True" Margin="10,0,5,0" Name="includeUserDeckInfoBox">Include User _Deck Info</CheckBox>
+                            <TextBlock ToolTip="If checked, will additionally query each user's public decklists to find instances of cards that were queried. Helpful for discovering which cards are used in a user's decks">&#x24D8;</TextBlock>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox Name="outputFileTypes" Margin="10,0,5,0">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding }"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                            <TextBlock Margin="0,0,5,0">Output File Type</TextBlock>
+                            <TextBlock ToolTip="The format for the output. Default is a text file. Html and JSON output types will also include the queried cards' scryfall image URL.">&#x24D8;</TextBlock>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox IsChecked="True" Margin="10,0,5,0" Name="openOutputAutomaticallyBox">O_pen Output Automatically</CheckBox>
+                            <TextBlock ToolTip="If checked, the output file will automatically be opened at the end of the query.">&#x24D8;</TextBlock>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock>Output File Name</TextBlock>
+                            <TextBlock ToolTip="The name of the output file. Will overwrite a file with the same name if already present. File format determined by Output File Type option.">&#x24D8;</TextBlock>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox IsChecked="True" Margin="10,0,5,10" Name="createLogFileBox">C_reate Log File</CheckBox>
+                            <TextBlock ToolTip="If checked, a log file will be created for the query. The name of the log file is log.txt. Will overwrite the old log file if it is present.">&#x24D8;</TextBlock>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -66,10 +91,13 @@
                     <TextBlock FontSize="10" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"><Italic>(Note: will overwrite currently present values)</Italic></TextBlock>
                 </StackPanel>
                 <Button Margin="5,0,0,0" FontSize="11" Name="cardsImportButton" HorizontalAlignment="Left" Click="cardsImportButton_Click">Import Cards</Button>
-                <ProgressBar Margin="7" MinHeight="20" Height="30"></ProgressBar>
+                <Grid>
+                    <ProgressBar Name="queryProgressBar" Margin="7" MinHeight="20" Height="30" Minimum="0" Maximum="100"></ProgressBar>
+                    <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Name="queryProgressBarText"/>
+                </Grid>
                 <DockPanel>
-                    <Button Margin="5,0,5,0" DockPanel.Dock="Right" Name="runQueryButton" Click="runQueryButton_Click">_Run Query</Button>
-                    <TextBlock Margin="5,0,0,0">This is where errors will go</TextBlock>
+                    <Button Margin="5,0,5,0" Padding="5,0,5,0" Name="cancelQueryButton" Click="cancelQueryButton_Click" IsEnabled="False">Ca_ncel Query</Button>
+                    <Button Margin="5,0,5,0" Name="runQueryButton" Click="runQueryButton_Click">_Run Query</Button>
                 </DockPanel>
             </StackPanel>
         </Grid>

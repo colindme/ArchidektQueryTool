@@ -1,5 +1,6 @@
 ﻿using Microsoft.Win32;
 using QueryLibrary;
+using System.ComponentModel;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -20,9 +21,20 @@ namespace ArchidektQueryGUI
 	/// </summary>
 	public partial class MainWindow : Window
 	{
+		bool _isQueryRunning;
+		CancellationTokenSource? _cancelTokenSource;
+
+		readonly ArchidektQueryTool _queryTool;
+
 		public MainWindow()
 		{
 			InitializeComponent();
+			
+			//outputFileTypes.ItemsSource = typeof(Config.OutputMode).GetProperties();
+			outputFileTypes.ItemsSource = Enum.GetValues(typeof(Config.OutputMode)).Cast<Config.OutputMode>();
+			_queryTool = new ArchidektQueryTool();
+
+			OnQueryProgress(QueryProgress.NotStarted);
 		}
 
 		private void usernameImportButton_Click(object sender, RoutedEventArgs e)
@@ -70,12 +82,13 @@ namespace ArchidektQueryGUI
 			return null;
 		}
 
-		private void runQueryButton_Click(object sender, RoutedEventArgs e)
+		// TODO: Figure out how to show failed exceptions? - Maybe a pop up lol
+		private async void runQueryButton_Click(object sender, RoutedEventArgs e)
 		{
 			runQueryButton.IsEnabled = false;
-
-			List<string> usernames = usernameBox.Text.Split('\n').Where(u => !(string.IsNullOrWhiteSpace(u) || string.IsNullOrEmpty(u))).ToList();
-			List<string> cards = cardsBox.Text.Split('\n').Where(u => !(string.IsNullOrWhiteSpace(u) || string.IsNullOrEmpty(u))).ToList();
+			cancelQueryButton.IsEnabled = true;
+			if (_isQueryRunning) return;
+			_isQueryRunning = true;
 
 			Config config = new Config()
 			{
@@ -84,6 +97,69 @@ namespace ArchidektQueryGUI
 				LogToFile = createLogFileBox.IsChecked.HasValue ? createLogFileBox.IsChecked.Value : true,
 				OpenOutputAutomatically = openOutputAutomaticallyBox.IsChecked.HasValue ? openOutputAutomaticallyBox.IsChecked.Value : true,
 			};
+
+			_queryTool.SetNewConfig(config);
+			_cancelTokenSource = new CancellationTokenSource();
+			
+			try
+			{
+				await _queryTool.Run(usernameBox.Text, cardsBox.Text, OnQueryProgress);
+			}
+			catch (Exception ex)
+			{
+
+			}
+		}
+
+		private void cancelQueryButton_Click(object sender, RoutedEventArgs e)
+		{
+			OnQueryProgress(QueryProgress.Canceled);
+		}
+
+		private void OnQueryProgress(QueryProgress progress)
+		{
+			switch (progress)
+			{
+				case QueryProgress.NotStarted:
+					queryProgressBar.Value = 0;
+					queryProgressBar.IsIndeterminate = false;
+					queryProgressBarText.Text = "Query not yet started.";
+					break;
+				case QueryProgress.GatheringQueryInfo:
+					queryProgressBar.Value = 25;
+					queryProgressBar.IsIndeterminate = false;
+					queryProgressBarText.Text = "Gathering Query info.";
+					break;
+				case QueryProgress.StartingQuery:
+					queryProgressBar.Value = 50;
+					queryProgressBar.IsIndeterminate = true;
+					queryProgressBarText.Text = "Starting Query...";
+					break;
+				case QueryProgress.CreatingOutput:
+					queryProgressBar.Value = 75;
+					queryProgressBar.IsIndeterminate = false;
+					queryProgressBarText.Text = "Creating output.";
+					break;
+				case QueryProgress.Done:
+					queryProgressBar.Value = 100;
+					queryProgressBar.IsIndeterminate = false;
+					queryProgressBarText.Text = "Query finished.";
+					_isQueryRunning = false;
+					runQueryButton.IsEnabled = true;
+					cancelQueryButton.IsEnabled = false;
+					break;
+				case QueryProgress.Canceled:
+					queryProgressBar.Value = 0;
+					queryProgressBar.IsIndeterminate = false;
+					queryProgressBarText.Text = "Query canceled.";
+					_isQueryRunning = false;
+					runQueryButton.IsEnabled = true;
+					cancelQueryButton.IsEnabled = false;
+					_cancelTokenSource?.Cancel();
+					break;
+				default:
+					break;
+			}
 		}
 	}
 }

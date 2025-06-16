@@ -12,6 +12,7 @@ namespace QueryLibrary
         GatheringQueryInfo = 1,
         StartingQuery = 2,
         CreatingOutput = 3,
-        Done = 4
+        Done = 4,
+        Canceled = 5
     }
 }
